@@ -60,9 +60,17 @@ def test_search_graph_edge_weights_can_disable_a_type(linked_docs):
     assert not any(h.path.endswith("retry.md") for h in without_links)
 
 
-def test_search_graph_rerank_combo_does_not_crash(fake_embedder, linked_docs):
-    r = Retriever(str(linked_docs), engines=["bm25", "fuzzy", "semantic"], embedder=fake_embedder)
-    results = r.search("password login", top_k=5, fetch_k=1, graph=True, rerank=True)
+class _FakeReranker:
+    """A rerank=<custom> stand-in that needs no extra -- just reverses the pool."""
+
+    def rerank(self, query, chunks, top_k=None):
+        pairs = [(c.id, float(i)) for i, c in enumerate(reversed(chunks))]
+        return pairs[:top_k] if top_k is not None else pairs
+
+
+def test_search_graph_rerank_combo_does_not_crash(linked_docs):
+    r = Retriever(str(linked_docs))
+    results = r.search("password login", top_k=5, fetch_k=1, graph=True, rerank=_FakeReranker())
     assert results
 
 
