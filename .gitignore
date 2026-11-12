@@ -13,3 +13,6 @@ htmlcov/
 .ruff_cache/
 .DS_Store
 .ragless_cache/
+examples/.graph_export/
+/DECISIONS.md
+/PROGRESS.md

@@ -26,7 +26,7 @@ from ragless.context.pipeline import (
 )
 from ragless.context.query_expansion import expand_query_terms, merge_search_results
 from ragless.context.tokens import TiktokenCounter, estimate_tokens
-from ragless.types import SearchResult
+from ragless.types import Chunk, SearchResult
 
 __all__ = [
     "Context",
@@ -61,6 +61,7 @@ def build_context(
     token_counter: Callable[[str], int] | None = None,
     pipeline: Sequence[ContextStep] | None = None,
     embed_fn: Callable[[Sequence[str]], np.ndarray] | None = None,
+    get_chunk: Callable[[str], Chunk | None] | None = None,
     highlight: bool = True,
     window: int = 2,
     merge_gap: int = 0,
@@ -86,6 +87,7 @@ def build_context(
             end_line=r.chunk.end_line,
             score=r.score,
             metadata=dict(r.chunk.metadata),
+            chunk_id=r.chunk.id,
         )
         for r in results
     ]
@@ -96,6 +98,7 @@ def build_context(
         token_counter=token_counter or estimate_tokens,
         doc_text=doc_text,
         embed_fn=embed_fn,
+        get_chunk=get_chunk,
     )
 
     steps = (

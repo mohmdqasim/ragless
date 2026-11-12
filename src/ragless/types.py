@@ -27,6 +27,10 @@ class SearchResult:
     score: float
     scores: dict[str, float] = field(default_factory=dict)
     """Per-retriever contribution, e.g. ``{"bm25": 0.8, "fuzzy": 0.4}``."""
+    graph_reasons: list[str] = field(default_factory=list)
+    """Set only for results added by graph expansion (``search(..., graph=True)``):
+    a human-readable path of edges back to whichever seed produced this
+    result, e.g. ``["auth.md links to retry.md"]``. Empty for ordinary hits."""
 
     @property
     def path(self) -> str | None:

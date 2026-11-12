@@ -21,11 +21,25 @@ from ragless.core import Retriever
 from ragless.embedders.base import Embedder
 from ragless.exceptions import MissingDependencyError, RaglessError, UnknownRetrieverError
 from ragless.fusion import reciprocal_rank_fusion
+from ragless.graph import (
+    ChunkGraph,
+    Edge,
+    EdgeBuilder,
+    ExpandedNode,
+    GraphExpand,
+    ImportEdges,
+    LinkEdges,
+    SemanticKNNEdges,
+    SharedTermEdges,
+    StructureEdges,
+    SymbolEdges,
+    build_default_edge_builders,
+)
 from ragless.rerank import CrossEncoderReranker, Reranker
 from ragless.retrievers import BaseRetriever, BM25Retriever, FuzzyRetriever, SemanticRetriever
 from ragless.types import Chunk, SearchResult
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Retriever",
@@ -58,5 +72,17 @@ __all__ = [
     "build_default_pipeline",
     "estimate_tokens",
     "TiktokenCounter",
+    "ChunkGraph",
+    "Edge",
+    "EdgeBuilder",
+    "LinkEdges",
+    "ImportEdges",
+    "SymbolEdges",
+    "StructureEdges",
+    "SharedTermEdges",
+    "SemanticKNNEdges",
+    "build_default_edge_builders",
+    "GraphExpand",
+    "ExpandedNode",
     "__version__",
 ]

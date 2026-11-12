@@ -10,11 +10,26 @@ from typing import Any
 
 from ragless.cache import EmbeddingCache, FileSignature, file_signature
 from ragless.chunking import Chunker, LineChunker
-from ragless.context import Context, ContextStep, build_context, render_prompt
+from ragless.context import (
+    Context,
+    ContextStep,
+    build_context,
+    build_default_pipeline,
+    render_prompt,
+)
 from ragless.context.query_expansion import expand_query_terms, merge_search_results
 from ragless.embedders.base import Embedder
 from ragless.exceptions import UnknownRetrieverError
 from ragless.fusion import reciprocal_rank_fusion
+from ragless.graph import (
+    ChunkGraph,
+    EdgeBuilder,
+    ExpandedNode,
+    GraphExpand,
+    build_default_edge_builders,
+    build_or_update_graph,
+    expand_from_seeds,
+)
 from ragless.rerank import Reranker
 from ragless.retrievers.base import BaseRetriever
 from ragless.retrievers.bm25 import BM25Retriever
@@ -77,6 +92,7 @@ class Retriever:
         encoding: str = "utf-8",
         rrf_k: int = 60,
         weights: Mapping[str, float] | None = None,
+        edge_builders: Sequence[EdgeBuilder] | None = None,
     ) -> None:
         """
         Args:
@@ -109,12 +125,18 @@ class Retriever:
             rrf_k: The ``k`` constant in Reciprocal Rank Fusion.
             weights: Optional per-engine weights used during fusion, e.g.
                 ``{"bm25": 1.0, "semantic": 2.0}``.
+            edge_builders: Custom :class:`~ragless.graph.EdgeBuilder` list for
+                the :attr:`graph` property, replacing the default set
+                (links, imports, symbols, structure, shared terms, and --
+                when a semantic embedder is configured -- semantic kNN).
         """
         self.chunker = chunker or LineChunker()
         self.rrf_k = rrf_k
         self.weights = weights
         self._cache_dir = cache_dir
         self._reranker: Reranker | None = None
+        self._edge_builders_override = edge_builders
+        self._chunk_graph: ChunkGraph | None = None
 
         documents = _load_documents(
             source, texts, include=include, exclude=exclude, encoding=encoding
@@ -183,6 +205,13 @@ class Retriever:
         path_filter: PathFilter = None,
         rerank: bool | Reranker = False,
         fetch_k: int | None = None,
+        graph: bool = False,
+        hops: int = 2,
+        max_expanded: int = 20,
+        graph_mode: str = "pagerank",
+        edge_weights: dict[str, float] | None = None,
+        min_score: float = 0.0,
+        keep_seeds: bool = True,
     ) -> list[SearchResult]:
         """Search the indexed corpus.
 
@@ -201,6 +230,21 @@ class Retriever:
                 implementing the :class:`~ragless.rerank.Reranker` protocol.
             fetch_k: How many results to fetch from each engine before fusion
                 and filtering. Defaults to ``max(top_k * 5, 25)``.
+            graph: Expand candidates using :attr:`graph` -- following links,
+                imports, symbol references, shared terms, etc. to pull in
+                chunks the query never mentioned. Off by default.
+            hops: Maximum traversal distance from a seed.
+            max_expanded: Maximum number of additional (non-seed) results
+                graph expansion can add.
+            graph_mode: ``"pagerank"`` (personalized PageRank with restart)
+                or ``"bfs"`` (bounded breadth-first search with per-hop decay).
+            edge_weights: Per-edge-type multiplier, e.g. ``{"link": 2.0}``,
+                applied at query time without rebuilding the graph.
+            min_score: Minimum expansion score for a node to be included.
+            keep_seeds: If ``True`` (default), expansion can never outrank a
+                seed -- the strongest non-seed result is capped at the
+                weakest seed's score. ``False`` lets expanded results compete
+                purely on score, so a seed could end up ranked lower or cut.
 
         Returns:
             Up to ``top_k`` :class:`~ragless.types.SearchResult`, best first.
@@ -222,13 +266,64 @@ class Retriever:
             if self._passes_filters(self._chunk_by_id[chunk_id], filters, path_filter)
         ]
 
+        graph_reasons: dict[str, list[str]] = {}
+        if graph and candidates:
+            candidates, graph_reasons = self._expand_with_graph(
+                candidates,
+                hops=hops,
+                max_expanded=max_expanded,
+                mode=graph_mode,
+                edge_weights=edge_weights,
+                min_score=min_score,
+                keep_seeds=keep_seeds,
+            )
+
         if rerank:
-            return self._rerank(query, candidates, rerank, top_k)
+            return self._rerank(query, candidates, rerank, top_k, graph_reasons=graph_reasons)
 
         return [
-            SearchResult(chunk=self._chunk_by_id[chunk_id], score=score, scores=raw)
+            SearchResult(
+                chunk=self._chunk_by_id[chunk_id],
+                score=score,
+                scores=raw,
+                graph_reasons=graph_reasons.get(chunk_id, []),
+            )
             for chunk_id, score, raw in candidates[:top_k]
         ]
+
+    def _expand_with_graph(
+        self,
+        candidates: list[tuple[str, float, dict[str, float]]],
+        *,
+        hops: int,
+        max_expanded: int,
+        mode: str,
+        edge_weights: dict[str, float] | None,
+        min_score: float,
+        keep_seeds: bool,
+    ) -> tuple[list[tuple[str, float, dict[str, float]]], dict[str, list[str]]]:
+        seed_scores = {chunk_id: score for chunk_id, score, _raw in candidates}
+        nodes: dict[str, ExpandedNode] = expand_from_seeds(
+            self.graph.adjacency(edge_weights),
+            seed_scores,
+            mode=mode,
+            hops=hops,
+            max_expanded=max_expanded,
+            min_score=min_score,
+            keep_seeds=keep_seeds,
+            edge_lookup=self.graph.edge_lookup(),
+        )
+        existing_ids = {chunk_id for chunk_id, _, _ in candidates}
+        merged = list(candidates)
+        reasons: dict[str, list[str]] = {}
+        for chunk_id, node in nodes.items():
+            if node.is_seed or chunk_id not in self._chunk_by_id:
+                continue
+            reasons[chunk_id] = [node.reason]
+            if chunk_id not in existing_ids:
+                merged.append((chunk_id, node.score, {"graph": node.score}))
+        merged.sort(key=lambda c: c[1], reverse=True)
+        return merged, reasons
 
     def context(
         self,
@@ -252,6 +347,13 @@ class Retriever:
         token_counter: Callable[[str], int] | None = None,
         pipeline: Sequence[ContextStep] | None = None,
         query_expansion: bool = False,
+        graph: bool = False,
+        hops: int = 2,
+        max_expanded: int = 20,
+        graph_mode: str = "pagerank",
+        edge_weights: dict[str, float] | None = None,
+        min_score: float = 0.0,
+        keep_seeds: bool = True,
     ) -> Context:
         """Search, then assemble ready-to-use context fitted to a token budget.
 
@@ -287,6 +389,15 @@ class Retriever:
                 ignored).
             query_expansion: Pseudo-relevance feedback: re-search with terms
                 pulled from the first pass's top results, off by default.
+            graph: Prepend a :class:`~ragless.graph.GraphExpand` step (see
+                :attr:`graph`) ahead of the default pipeline, so expanded
+                passages also get windowed/merged/deduped/diversified/
+                compressed/packed just like any other passage. Has no effect
+                if ``pipeline=`` is given explicitly -- add
+                ``GraphExpand(r.graph, ...)`` to your own list instead.
+            hops, max_expanded, graph_mode, edge_weights, min_score,
+                keep_seeds: Forwarded to :class:`~ragless.graph.GraphExpand`
+                when ``graph=True``; see :meth:`search` for what each means.
 
         See :meth:`search` for ``mode``, ``filters``, ``path_filter``,
         ``rerank``, and ``fetch_k``.
@@ -317,6 +428,29 @@ class Retriever:
             if rerank:
                 results = self._rerank_results(query, results, rerank, pool_k)
 
+        effective_pipeline = list(pipeline) if pipeline is not None else None
+        if graph and effective_pipeline is None:
+            effective_pipeline = [
+                GraphExpand(
+                    self.graph,
+                    mode=graph_mode,
+                    hops=hops,
+                    max_expanded=max_expanded,
+                    min_score=min_score,
+                    keep_seeds=keep_seeds,
+                    edge_weights=edge_weights,
+                ),
+                *build_default_pipeline(
+                    window=window,
+                    merge_gap=merge_gap,
+                    dedup_threshold=dedup_threshold,
+                    diversify=diversify,
+                    mmr_lambda=mmr_lambda,
+                    compress=compress,
+                    compress_ratio=compress_ratio,
+                ),
+            ]
+
         return build_context(
             query=query,
             results=results,
@@ -324,8 +458,9 @@ class Retriever:
             chunk_doc_id=lambda chunk_id: self._chunk_doc_id.get(chunk_id, chunk_id),
             max_tokens=max_tokens,
             token_counter=token_counter,
-            pipeline=list(pipeline) if pipeline is not None else None,
+            pipeline=effective_pipeline,
             embed_fn=self._embed_fn_for_diversify(),
+            get_chunk=lambda chunk_id: self._chunk_by_id.get(chunk_id),
             highlight=highlight,
             window=window,
             merge_gap=merge_gap,
@@ -357,10 +492,39 @@ class Retriever:
         ]
 
     def _embed_fn_for_diversify(self) -> Callable[[Sequence[str]], Any] | None:
+        embedder = self._semantic_embedder()
+        return embedder.embed if embedder is not None else None
+
+    def _semantic_embedder(self) -> Embedder | None:
         semantic = self._retrievers.get("semantic")
         if semantic is None or not hasattr(semantic, "embedder"):
             return None
-        return semantic.embedder.embed
+        return semantic.embedder
+
+    @property
+    def graph(self) -> ChunkGraph:
+        """The :class:`~ragless.graph.ChunkGraph` over this corpus.
+
+        Built (or loaded + incrementally updated from ``cache_dir``, if one
+        was given) on first access and cached on the instance. Edge builders
+        default to :func:`~ragless.graph.build_default_edge_builders`
+        (overridable via the ``edge_builders=`` constructor argument).
+        """
+        if self._chunk_graph is None:
+            builders = (
+                self._edge_builders_override
+                if self._edge_builders_override is not None
+                else build_default_edge_builders(self._semantic_embedder())
+            )
+            self._chunk_graph = build_or_update_graph(
+                self._cache_dir,
+                self._chunks,
+                self._chunk_doc_id,
+                self._doc_text,
+                builders,
+                self._file_signatures,
+            )
+        return self._chunk_graph
 
     def prompt(
         self,
@@ -384,7 +548,9 @@ class Retriever:
         candidates: list[tuple[str, float, dict[str, float]]],
         rerank: bool | Reranker,
         top_k: int,
+        graph_reasons: dict[str, list[str]] | None = None,
     ) -> list[SearchResult]:
+        graph_reasons = graph_reasons or {}
         reranker = rerank if hasattr(rerank, "rerank") else self._get_default_reranker()
         pool = candidates[: max(top_k * 3, 20)]
         pool_chunks = [self._chunk_by_id[chunk_id] for chunk_id, _, _ in pool]
@@ -396,6 +562,7 @@ class Retriever:
                 chunk=self._chunk_by_id[chunk_id],
                 score=score,
                 scores={**raw_by_id.get(chunk_id, {}), "rerank": score},
+                graph_reasons=graph_reasons.get(chunk_id, []),
             )
             for chunk_id, score in reranked
         ]

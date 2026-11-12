@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 
 from ragless.context._lexical import content_terms, tokenize
 from ragless.context.passage import Passage
+from ragless.types import Chunk
 
 _CODE_EXTS = {
     ".py",
@@ -63,6 +64,11 @@ class PipelineState:
     """``doc_id -> full original text`` (``""`` if unavailable)."""
     embed_fn: Callable[[Sequence[str]], np.ndarray] | None = None
     """Optional embedder used by :class:`Diversify`; falls back to lexical similarity."""
+    get_chunk: Callable[[str], Chunk | None] | None = None
+    """Looks up any chunk in the corpus by id, not just ones already in ``passages``.
+    Used by :class:`~ragless.graph.expand.GraphExpand` to materialize passages for
+    graph-expanded chunks the search itself never returned. ``None`` outside a
+    :class:`~ragless.core.Retriever` (e.g. a hand-built ``PipelineState``)."""
 
 
 class ContextStep:

@@ -37,6 +37,10 @@ class Passage:
     metadata: dict[str, Any] = field(default_factory=dict)
     highlights: list[tuple[int, int]] = field(default_factory=list)
     """Character offsets of matched query terms within ``text``, ``(start, end)``."""
+    chunk_id: str | None = None
+    """The single original chunk id this passage came from, if it still maps to
+    exactly one -- cleared (``None``) once a passage has been merged/expanded
+    across chunk boundaries, since it no longer corresponds to just one."""
 
     @property
     def ref(self) -> str:
