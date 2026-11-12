@@ -2,7 +2,7 @@
 
 Autonomous build log for `ragless`. Updated as work proceeds.
 
-## Status: build complete, CI green on GitHub, publishing blocked on a manual PyPI step
+## Status: done -- published to PyPI as ragless 0.1.0
 
 ### Done
 
@@ -45,42 +45,17 @@ Autonomous build log for `ragless`. Updated as work proceeds.
       slow-model job, and build+smoke-test job all passed
       (https://github.com/mohmdqasim/ragless/actions).
 
-### Next
+- [x] User set up the PyPI trusted publisher (pending publisher for
+      owner=`mohmdqasim`, repo=`ragless`, workflow=`publish.yml`,
+      environment=`pypi`) before the tag was pushed.
+- [x] Tagged `v0.1.0`, pushed the tag (clean tagger identity, no AI
+      mentions). `publish.yml` ran: test matrix -> build -> publish, all
+      green, via OIDC trusted publishing (no token ever stored).
+- [x] Verified with `pip install ragless` in a fresh venv: imports, searches
+      in-memory text, returns the expected result.
 
-- [ ] Tag `v0.1.0`, push the tag, watch the publish workflow run.
-- [ ] Verify with `pip install ragless` in a fresh venv + a quick search.
+## Links
 
-## Blocking item: PyPI trusted publisher registration
-
-**This cannot be completed autonomously** -- it requires logging into
-pypi.org with human credentials, which this session does not have and
-should not attempt to obtain.
-
-`publish.yml` is wired for PyPI's OIDC "trusted publishing": no API token is
-stored anywhere, but PyPI must be told in advance which GitHub repo/workflow
-is allowed to publish the `ragless` project. For a project that has never
-been published before, this is done once via PyPI's web UI as a **pending
-publisher**, which reserves the name and links it to this workflow ahead of
-the first publish.
-
-### What you need to do (takes ~1 minute)
-
-1. Log into https://pypi.org (create an account first if you don't have
-   one).
-2. Go to https://pypi.org/manage/account/publishing/
-3. Under "Add a new pending publisher", fill in:
-   - **PyPI project name**: `ragless`
-   - **Owner**: `mohmdqasim`
-   - **Repository name**: `ragless`
-   - **Workflow name**: `publish.yml`
-   - **Environment name**: `pypi`
-4. Submit. That's it -- no token to copy anywhere.
-
-Once that's set up, the next tag push (or a re-run of a failed `publish.yml`
-run) will publish successfully. If this step hasn't been done yet when this
-session tags `v0.1.0` and pushes it, the `publish` job in the workflow run
-will fail at the PyPI upload step with an authentication error -- that is
-expected and not a bug in the workflow; it just means the pending publisher
-above still needs to be registered, after which re-running that same
-workflow run (via the GitHub Actions UI, or pushing a new tag like `v0.1.1`)
-will succeed.
+- GitHub: https://github.com/mohmdqasim/ragless
+- PyPI: https://pypi.org/project/ragless/
+- CI: https://github.com/mohmdqasim/ragless/actions
