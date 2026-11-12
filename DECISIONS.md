@@ -9,8 +9,8 @@ Decisions made while building `ragless` without the user available to ask.
 - **Python support**: `>=3.10`. Chosen as a modern-but-not-bleeding-edge
   floor; CI covers 3.10-3.13 on Ubuntu and macOS.
 - **GitHub owner/repo**: created under the authenticated `gh` account
-  `qasim-ensi-ai`, repo name `ragless` (public). `pyproject.toml` URLs point
-  at `https://github.com/qasim-ensi-ai/ragless`.
+  `mohmdqasim`, repo name `ragless` (public). `pyproject.toml` URLs point
+  at `https://github.com/mohmdqasim/ragless`.
 - **Linting**: `ruff` (check + format), configured in `pyproject.toml`
   (`[tool.ruff]`). CI fails on any lint or formatting diff.
 - **Coverage gate**: `--cov-fail-under=85` in CI, matching the 85%+ target.

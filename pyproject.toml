@@ -39,10 +39,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/qasim-ensi-ai/ragless"
-Repository = "https://github.com/qasim-ensi-ai/ragless"
-Issues = "https://github.com/qasim-ensi-ai/ragless/issues"
-Changelog = "https://github.com/qasim-ensi-ai/ragless/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/mohmdqasim/ragless"
+Repository = "https://github.com/mohmdqasim/ragless"
+Issues = "https://github.com/mohmdqasim/ragless/issues"
+Changelog = "https://github.com/mohmdqasim/ragless/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ragless"]

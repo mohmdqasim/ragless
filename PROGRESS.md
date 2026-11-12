@@ -34,7 +34,7 @@ Autonomous build log for `ragless`. Updated as work proceeds.
 
 - [ ] `git init` + initial commit.
 - [ ] Create public GitHub repo `ragless` under the authenticated account
-      (`qasim-ensi-ai`) via `gh repo create`, push.
+      (`mohmdqasim`) via `gh repo create`, push.
 - [ ] Create the `pypi` GitHub Environment on the repo via `gh api`.
 - [ ] Wait for CI to go green on `main`; fix and re-push if anything fails.
 - [ ] Tag `v0.1.0`, push the tag, watch the publish workflow run.
@@ -60,7 +60,7 @@ the first publish.
 2. Go to https://pypi.org/manage/account/publishing/
 3. Under "Add a new pending publisher", fill in:
    - **PyPI project name**: `ragless`
-   - **Owner**: `qasim-ensi-ai`
+   - **Owner**: `mohmdqasim`
    - **Repository name**: `ragless`
    - **Workflow name**: `publish.yml`
    - **Environment name**: `pypi`
