@@ -116,6 +116,96 @@ r = Retriever("./docs", engines={"bm25": MyRetriever(), "fuzzy": FuzzyRetriever(
 Implement `ragless.chunking.Chunker`, `ragless.retrievers.base.BaseRetriever`,
 or `ragless.embedders.base.Embedder` to plug in your own.
 
+## Context for your LLM
+
+`ragless` handles everything up to the LLM call: `r.context()` turns a query
+into ready-to-use, budget-fitted context. There's no LLM inside `ragless` --
+it never makes a network call or imports an LLM client; it just hands you the
+material to send to whichever model you call yourself.
+
+```python
+from ragless import Retriever
+
+r = Retriever("./docs")
+ctx = r.context("how do I configure retries", max_tokens=2000)
+
+print(ctx.token_count)       # never exceeds max_tokens
+for citation in ctx.citations:
+    print(citation)          # [1] docs/retries.md:12-34
+```
+
+Under the hood, `context()` runs a pipeline of small, swappable steps:
+expand hits with neighboring lines, merge adjacent hits from the same file,
+drop near-duplicates, diversify with MMR, optionally compress to the most
+relevant sentences/lines, then pack whole passages into the token budget
+(never truncating mid-passage). Every passage keeps a `reasons` list (e.g.
+`["direct match"]`, `["direct match", "neighbor window"]`) explaining why it
+was included.
+
+### Output formats
+
+```python
+ctx.to_text()       # plain text with trailing "[n] path:start-end" citations
+ctx.to_markdown()   # fenced code blocks for code paths, blockquotes for prose
+ctx.to_xml()        # <context><passage index="1" ref="...">...</passage></context>
+ctx.to_json()       # full structure, including matched-term highlight offsets
+ctx.to_text(mark=True)  # wraps matched query terms, e.g. with >>term<<
+```
+
+### Prompts -- still no LLM call
+
+```python
+prompt = r.prompt(
+    "how do I configure retries",
+    max_tokens=2000,
+    template="Context:\n{context}\n\nQuestion: {query}\nAnswer:",  # optional
+)
+
+# Send it to any client yourself:
+# response = my_llm_client.complete(prompt)
+```
+
+### Tuning the pipeline
+
+```python
+r.context(
+    "query",
+    max_tokens=2000,
+    window=3,              # lines of neighboring context to pull in
+    dedup_threshold=90,     # fuzzy-ratio cutoff for near-duplicates
+    diversify=True,         # reorder by Maximal Marginal Relevance
+    compress=True,          # keep only the most query-relevant sentences/lines
+    query_expansion=True,   # pseudo-relevance feedback (RM3-style), off by default
+)
+```
+
+Exact token counts (instead of the dependency-free default estimate) are
+available via `pip install 'ragless[tokens]'`:
+
+```python
+from ragless import Retriever
+from ragless.context import TiktokenCounter
+
+r = Retriever("./docs")
+r.context("query", max_tokens=2000, token_counter=TiktokenCounter())
+```
+
+### Custom pipeline steps
+
+```python
+from ragless.context import ContextStep, Pack
+
+class DropShortPassages(ContextStep):
+    def run(self, passages, state):
+        return [p for p in passages if len(p.text) > 40]
+
+r.context("query", max_tokens=2000, pipeline=[DropShortPassages(), Pack()])
+```
+
+A pipeline step only needs `run(passages, state) -> passages`, so a future
+graph-expansion step can plug in the same way: add candidate passages with
+their own `reasons` entry, without touching merge/dedup/pack.
+
 ## Why
 
 Most "RAG" tutorials reach for a vector database before checking whether they
@@ -160,10 +250,22 @@ docs folder sitting next to your code, `ragless` is simpler.
    [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf),
    apply metadata/path filters, and optionally rerank the top candidates with
    a cross-encoder.
+5. **Context** -- `r.context()` runs search results through a pipeline (expand
+   -> merge -> dedup -> diversify -> compress -> pack) and returns a
+   `Context` fitted to a token budget, with citations and highlight offsets.
+   `r.prompt()` renders that into a prompt string. No LLM call happens
+   anywhere in `ragless`.
+
+## Roadmap
+
+- **Graph-based retrieval** (planned next): expand candidates by following
+  references between chunks (e.g. imports, links, call graphs) as another
+  pluggable `context` pipeline step, so related-but-not-directly-matched
+  passages can be pulled in with their own `reasons` entry.
 
 ## Status
 
-0.1.0 -- the API may still shift. Feedback and issues welcome.
+0.2.0 -- the API may still shift. Feedback and issues welcome.
 
 ## License
 
