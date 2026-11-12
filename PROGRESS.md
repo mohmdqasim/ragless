@@ -2,7 +2,7 @@
 
 Autonomous build log for `ragless`. Updated as work proceeds.
 
-## Status: build complete, local verification complete, publishing blocked on a manual step
+## Status: build complete, CI green on GitHub, publishing blocked on a manual PyPI step
 
 ### Done
 
@@ -30,13 +30,23 @@ Autonomous build log for `ragless`. Updated as work proceeds.
       builds, then publishes via OIDC trusted publishing to the `pypi`
       environment).
 
-### Next (will be executed autonomously, updated as they complete)
+- [x] `git init` + initial commit, history kept to clean, correctly-authored
+      commits (`Qasim Arshad <mohmdqasim0@gmail.com>`), no AI/trailer
+      mentions anywhere.
+- [x] `twine check dist/*` passes (sdist + wheel); PyPI page will render the
+      full README as `text/markdown` with correct author/maintainer and
+      project URLs (Homepage/Repository/Issues/Changelog).
+- [x] Public GitHub repo created at https://github.com/mohmdqasim/ragless
+      (the repo was first created under the wrong, auto-selected `gh`
+      account and was recreated here after the user logged `gh` into their
+      personal account; the old repo was deleted by the user).
+- [x] `pypi` GitHub Environment created on the repo via `gh api`.
+- [x] CI green on `main`: lint, test matrix (ubuntu/macos x 3.10-3.13),
+      slow-model job, and build+smoke-test job all passed
+      (https://github.com/mohmdqasim/ragless/actions).
 
-- [ ] `git init` + initial commit.
-- [ ] Create public GitHub repo `ragless` under the authenticated account
-      (`mohmdqasim`) via `gh repo create`, push.
-- [ ] Create the `pypi` GitHub Environment on the repo via `gh api`.
-- [ ] Wait for CI to go green on `main`; fix and re-push if anything fails.
+### Next
+
 - [ ] Tag `v0.1.0`, push the tag, watch the publish workflow run.
 - [ ] Verify with `pip install ragless` in a fresh venv + a quick search.
 
