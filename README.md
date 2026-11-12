@@ -208,6 +208,92 @@ A pipeline step only needs `run(passages, state) -> passages`, so a future
 graph-expansion step can plug in the same way: add candidate passages with
 their own `reasons` entry, without touching merge/dedup/pack.
 
+## Graph retrieval
+
+Search hits become seeds, and a graph built from structure *already in your
+files* -- links, imports, symbol definitions/usages, heading hierarchy,
+shared rare terms, and (optionally) embedding similarity -- pulls in related
+chunks the query never mentioned. No LLM is involved in building or walking
+this graph; it's the opposite of LLM-based GraphRAG, which uses a model to
+extract entities/relations. Here the "relations" are just the links, imports,
+and symbols that were already sitting in your files.
+
+```python
+from ragless import Retriever
+
+r = Retriever("./docs")
+
+# follows links/imports/symbols/etc. up to 2 hops from the search hits
+for hit in r.search("how does login retry work", graph=True):
+    print(hit.path, hit.score, hit.graph_reasons)  # e.g. ["auth.md links to retry.md"]
+
+# graph expansion is just another step in the v0.2 context pipeline
+ctx = r.context("how does login retry work", max_tokens=2000, graph=True)
+```
+
+Off by default; turn it on with `graph=True` on `search()` or `context()`.
+Tune it with `hops`, `max_expanded`, `graph_mode` (`"pagerank"` or `"bfs"`),
+`edge_weights` (reweight edge types at query time, e.g. `{"link": 2.0}`,
+without rebuilding the graph), `min_score`, and `keep_seeds` (default
+`True`: a seed is never outranked by something the graph pulled in).
+
+### Inspecting the graph directly
+
+```python
+r.graph.stats()  # {"nodes": ..., "edges": ..., "edges_by_type": {...}}
+r.graph.related("docs/auth.md", k=5)  # other files most connected to this one
+r.graph.explain(some_chunk_id)  # every edge touching this chunk, with its reason
+r.graph.neighbors(some_chunk_id, edge_types=["import"])
+
+r.graph.to_json()
+r.graph.to_graphml()  # plain XML, no extra dependency
+r.graph.to_networkx()  # requires `pip install ragless[graph]`
+```
+
+### Custom edge builders
+
+```python
+from ragless import Retriever
+from ragless.graph import LinkEdges, ImportEdges, EdgeBuilder
+
+
+class MyEdges(EdgeBuilder):
+    name = "my_edges"
+
+    def build(self, ctx): ...  # see ragless.graph.builders for the BuildContext API
+
+
+r = Retriever("./docs", edge_builders=[LinkEdges(weight=2.0), ImportEdges(), MyEdges()])
+```
+
+The graph persists as a plain `graph.json` sidecar file in `cache_dir` (the
+same directory used for the embedding cache) and updates incrementally when
+files change, add, delete, or rename -- only the affected files are
+re-scanned; the result matches a full rebuild exactly.
+
+### Does it actually help?
+
+On a small multi-hop benchmark (queries whose answer is only in a file
+*linked from* the directly-matched one -- a support doc pointing at a policy
+doc, a client module importing the function that does the real work) with
+3 such queries plus 1 distractor:
+
+| | recall@3 | precision@3 |
+|---|---|---|
+| hybrid search alone | 0.50 | 0.167 |
+| with `graph=True` | 1.00 | 0.333 |
+
+The honest case where it doesn't help: a query whose answer is in an
+isolated file with no links, imports, or shared distinctive terms to anything
+else -- graph expansion has nothing to expand into, so results are identical
+with or without it. If your corpus is mostly standalone files, don't expect
+much lift.
+
+On a synthetic ~5,000-chunk corpus (700 linked markdown files): building the
+graph took ~4.9s, and an average `graph=True` query (PageRank, 2 hops) added
+~25ms over plain hybrid search. Reproduce with
+`pytest --run-slow -m slow tests/test_graph_benchmark.py -s`.
+
 ## Why
 
 Most "RAG" tutorials reach for a vector database before checking whether they
@@ -257,17 +343,23 @@ docs folder sitting next to your code, `ragless` is simpler.
    `Context` fitted to a token budget, with citations and highlight offsets.
    `r.prompt()` renders that into a prompt string. No LLM call happens
    anywhere in `ragless`.
+6. **Graph** (optional) -- `r.graph` builds a typed, weighted graph over
+   chunks from structure already in the files (links, imports, symbols,
+   headings, shared rare terms); `graph=True` on `search()`/`context()`
+   expands search hits across it (personalized PageRank or bounded BFS) to
+   pull in related chunks the query never mentioned.
 
 ## Roadmap
 
-- **Graph-based retrieval** (planned next): expand candidates by following
-  references between chunks (e.g. imports, links, call graphs) as another
-  pluggable `context` pipeline step, so related-but-not-directly-matched
-  passages can be pulled in with their own `reasons` entry.
+- Query-time re-ranking that blends graph centrality with relevance scores
+  more flexibly than the current fixed combination formula.
+- Incremental graph updates for the two corpus-wide edge builders (symbols,
+  shared terms) -- currently always fully recomputed on any change; see
+  `ragless.graph.ChunkGraph` for the local/global builder split.
 
 ## Status
 
-0.2.0 -- the API may still shift. Feedback and issues welcome.
+0.3.0 -- the API may still shift. Feedback and issues welcome.
 
 ## License
 

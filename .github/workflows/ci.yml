@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev,semantic,tokens]"
+      - run: pip install -e ".[dev,semantic,tokens,graph]"
       - run: pytest -q --run-slow -m slow
 
   build:
@@ -66,6 +66,8 @@ jobs:
           import ragless
           r = ragless.Retriever(['hello world', 'goodbye world'])
           assert r.search('hello')
+          ctx = r.context('hello', max_tokens=200, graph=True)
+          assert ctx.passages
           print('ragless', ragless.__version__, 'smoke test OK')
           "
       - uses: actions/upload-artifact@v4

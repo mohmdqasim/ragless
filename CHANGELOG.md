@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-13
+
+### Added
+
+- `ragless.graph`: graph-based retrieval built from structure already in
+  your files -- no LLM involved in building or walking it.
+- Edge builders (pluggable, individually weighted/enabled): `LinkEdges`
+  (markdown/reference/wiki links, bare relative-path mentions, heading
+  anchors), `ImportEdges` (Python via `ast`, JS/TS via regex), `SymbolEdges`
+  (definition-to-usage, Python via `ast`, other languages via conservative
+  regex), `StructureEdges` (sequential neighbors, heading hierarchy),
+  `SharedTermEdges` (shared high-IDF terms, capped per node), and
+  `SemanticKNNEdges` (embedding cosine similarity -- only added by default
+  when the `semantic` extra's engine is configured).
+- `search(..., graph=True, ...)` and `context(..., graph=True, ...)`: expand
+  search hits across the graph with personalized PageRank (default) or
+  bounded BFS, with `hops`, `max_expanded`, `edge_weights`, `min_score`, and
+  `keep_seeds` (default `True` -- a seed is never outranked by expansion).
+  Every expanded result carries its edge path back to a seed
+  (`SearchResult.graph_reasons`, `Passage.reasons`).
+- `Retriever.graph`: a lazily built, cached `ChunkGraph` with `neighbors()`,
+  `related()`, `explain()`, `stats()`, and `to_json()`/`to_graphml()`/
+  `to_networkx()` (networkx requires the new `graph` extra) export.
+- The graph persists as a `graph.json` sidecar file in `cache_dir` and
+  updates incrementally on file changes/additions/deletions/renames,
+  matching a full rebuild exactly.
+- `GraphExpand`: the graph-expansion step for the `ragless.context` pipeline,
+  so expanded passages flow through window-expand/merge/dedup/diversify/
+  compress/pack like any other passage.
+- `edge_builders=` constructor argument on `Retriever` to fully replace the
+  default edge-builder set.
+- New `graph` extra (`networkx`, for `ChunkGraph.to_networkx()` only -- the
+  rest of `ragless.graph` has no new required dependencies).
+- New examples: `graph_retrieval.py`, `graph_export.py`.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added
