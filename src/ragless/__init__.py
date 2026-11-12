@@ -1,6 +1,22 @@
 """ragless: file-based retrieval for RAG, no vector database required."""
 
 from ragless.chunking import Chunker, LineChunker
+from ragless.context import (
+    Citation,
+    Compress,
+    Context,
+    ContextStep,
+    Dedup,
+    Diversify,
+    MergeAdjacent,
+    Pack,
+    Passage,
+    PipelineState,
+    TiktokenCounter,
+    WindowExpand,
+    build_default_pipeline,
+    estimate_tokens,
+)
 from ragless.core import Retriever
 from ragless.embedders.base import Embedder
 from ragless.exceptions import MissingDependencyError, RaglessError, UnknownRetrieverError
@@ -9,7 +25,7 @@ from ragless.rerank import CrossEncoderReranker, Reranker
 from ragless.retrievers import BaseRetriever, BM25Retriever, FuzzyRetriever, SemanticRetriever
 from ragless.types import Chunk, SearchResult
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Retriever",
@@ -28,5 +44,19 @@ __all__ = [
     "RaglessError",
     "MissingDependencyError",
     "UnknownRetrieverError",
+    "Context",
+    "Citation",
+    "Passage",
+    "ContextStep",
+    "WindowExpand",
+    "MergeAdjacent",
+    "Dedup",
+    "Diversify",
+    "Compress",
+    "Pack",
+    "PipelineState",
+    "build_default_pipeline",
+    "estimate_tokens",
+    "TiktokenCounter",
     "__version__",
 ]

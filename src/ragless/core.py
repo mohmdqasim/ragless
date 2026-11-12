@@ -10,6 +10,8 @@ from typing import Any
 
 from ragless.cache import EmbeddingCache, FileSignature, file_signature
 from ragless.chunking import Chunker, LineChunker
+from ragless.context import Context, ContextStep, build_context, render_prompt
+from ragless.context.query_expansion import expand_query_terms, merge_search_results
 from ragless.embedders.base import Embedder
 from ragless.exceptions import UnknownRetrieverError
 from ragless.fusion import reciprocal_rank_fusion
@@ -121,6 +123,8 @@ class Retriever:
         self._chunks: list[Chunk] = []
         self._chunk_by_id: dict[str, Chunk] = {}
         self._file_signatures: dict[str, FileSignature] = {}
+        self._doc_text: dict[str, str] = {}
+        self._chunk_doc_id: dict[str, str] = {}
 
         mem_index = 0
         for path, text in documents:
@@ -131,12 +135,14 @@ class Retriever:
                 prefix = path
                 self._file_signatures[path] = file_signature(Path(path))
 
+            self._doc_text[prefix] = text
             chunk_metadata = _resolve_metadata(metadata, path)
             for chunk in self.chunker.chunk(
                 text, path=path, chunk_id_prefix=prefix, metadata=chunk_metadata
             ):
                 self._chunks.append(chunk)
                 self._chunk_by_id[chunk.id] = chunk
+                self._chunk_doc_id[chunk.id] = prefix
 
         self._retrievers: dict[str, BaseRetriever] = {}
         if isinstance(engines, Mapping):
@@ -223,6 +229,154 @@ class Retriever:
             SearchResult(chunk=self._chunk_by_id[chunk_id], score=score, scores=raw)
             for chunk_id, score, raw in candidates[:top_k]
         ]
+
+    def context(
+        self,
+        query: str,
+        *,
+        max_tokens: int = 2000,
+        mode: str = "hybrid",
+        top_k: int | None = None,
+        filters: Filters = None,
+        path_filter: PathFilter = None,
+        rerank: bool | Reranker = False,
+        fetch_k: int | None = None,
+        window: int = 2,
+        merge_gap: int = 0,
+        dedup_threshold: float | None = 92.0,
+        diversify: bool = True,
+        mmr_lambda: float = 0.5,
+        compress: bool = False,
+        compress_ratio: float = 0.5,
+        highlight: bool = True,
+        token_counter: Callable[[str], int] | None = None,
+        pipeline: Sequence[ContextStep] | None = None,
+        query_expansion: bool = False,
+    ) -> Context:
+        """Search, then assemble ready-to-use context fitted to a token budget.
+
+        Runs :meth:`search` (optionally with RM3-style query expansion), then
+        a pipeline of expand -> merge -> dedup -> diversify -> compress ->
+        pack steps, and returns a :class:`~ragless.context.Context` with
+        ``.passages``, ``.citations``, ``.token_count``, and
+        ``.to_text()``/``.to_markdown()``/``.to_xml()``/``.to_json()``.
+
+        Args:
+            max_tokens: Token budget for the packed context.
+            top_k: Candidate pool size before pipeline steps run. Defaults to
+                a generous pool sized off ``max_tokens``.
+            window: Neighboring lines to include around each hit.
+            merge_gap: Extra line gap still considered "adjacent" when
+                merging same-file hits.
+            dedup_threshold: Fuzzy-ratio threshold (0-100) above which two
+                passages are considered duplicates; ``None``/``0`` disables.
+            diversify: Reorder candidates by Maximal Marginal Relevance.
+            mmr_lambda: Relevance-vs-diversity trade-off for ``diversify``.
+            compress: Extractively compress each passage to its most
+                query-relevant sentences/lines.
+            compress_ratio: Fraction of sentences/lines kept when
+                ``compress=True``.
+            highlight: Record character offsets of matched query terms on
+                each passage.
+            token_counter: Custom token counter, e.g.
+                :class:`ragless.context.TiktokenCounter`. Defaults to a
+                dependency-free character-based estimate.
+            pipeline: A full custom list of
+                :class:`~ragless.context.ContextStep`, replacing the default
+                pipeline entirely (``window``/``merge_gap``/etc. are then
+                ignored).
+            query_expansion: Pseudo-relevance feedback: re-search with terms
+                pulled from the first pass's top results, off by default.
+
+        See :meth:`search` for ``mode``, ``filters``, ``path_filter``,
+        ``rerank``, and ``fetch_k``.
+        """
+        pool_k = top_k if top_k is not None else max(50, max_tokens // 20)
+        results = self.search(
+            query,
+            mode=mode,
+            top_k=pool_k,
+            filters=filters,
+            path_filter=path_filter,
+            rerank=False if query_expansion else rerank,
+            fetch_k=fetch_k,
+        )
+
+        if query_expansion:
+            terms = expand_query_terms([r.text for r in results], query)
+            if terms:
+                expanded = self.search(
+                    f"{query} {' '.join(terms)}",
+                    mode=mode,
+                    top_k=pool_k,
+                    filters=filters,
+                    path_filter=path_filter,
+                    fetch_k=fetch_k,
+                )
+                results = merge_search_results(results, expanded)
+            if rerank:
+                results = self._rerank_results(query, results, rerank, pool_k)
+
+        return build_context(
+            query=query,
+            results=results,
+            doc_text=lambda doc_id: self._doc_text.get(doc_id, ""),
+            chunk_doc_id=lambda chunk_id: self._chunk_doc_id.get(chunk_id, chunk_id),
+            max_tokens=max_tokens,
+            token_counter=token_counter,
+            pipeline=list(pipeline) if pipeline is not None else None,
+            embed_fn=self._embed_fn_for_diversify(),
+            highlight=highlight,
+            window=window,
+            merge_gap=merge_gap,
+            dedup_threshold=dedup_threshold,
+            diversify=diversify,
+            mmr_lambda=mmr_lambda,
+            compress=compress,
+            compress_ratio=compress_ratio,
+        )
+
+    def _rerank_results(
+        self,
+        query: str,
+        results: list[SearchResult],
+        rerank: bool | Reranker,
+        top_k: int,
+    ) -> list[SearchResult]:
+        reranker = rerank if hasattr(rerank, "rerank") else self._get_default_reranker()
+        chunks = [r.chunk for r in results]
+        raw_by_id = {r.chunk.id: r.scores for r in results}
+        reranked = reranker.rerank(query, chunks, top_k=top_k)
+        return [
+            SearchResult(
+                chunk=self._chunk_by_id[chunk_id],
+                score=score,
+                scores={**raw_by_id.get(chunk_id, {}), "rerank": score},
+            )
+            for chunk_id, score in reranked
+        ]
+
+    def _embed_fn_for_diversify(self) -> Callable[[Sequence[str]], Any] | None:
+        semantic = self._retrievers.get("semantic")
+        if semantic is None or not hasattr(semantic, "embedder"):
+            return None
+        return semantic.embedder.embed
+
+    def prompt(
+        self,
+        query: str,
+        *,
+        template: str | Callable[[str, Context], str] | None = None,
+        context_format: str = "markdown",
+        **context_kwargs: Any,
+    ) -> str:
+        """Render a ready-to-send prompt string: :meth:`context` plus a template.
+
+        ``ragless`` never calls an LLM itself; this only builds the prompt
+        string for whichever client you call yourself.
+        """
+        ctx = self.context(query, **context_kwargs)
+        return render_prompt(query, ctx, template=template, context_format=context_format)
 
     def _rerank(
         self,

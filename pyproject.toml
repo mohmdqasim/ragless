@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ragless"
-version = "0.1.0"
+version = "0.2.0"
 description = "File-based retrieval for RAG, no vector database required"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
@@ -31,6 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 semantic = ["fastembed>=0.3"]
+tokens = ["tiktoken>=0.7"]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
