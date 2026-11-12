@@ -129,9 +129,9 @@ from ragless import Retriever
 r = Retriever("./docs")
 ctx = r.context("how do I configure retries", max_tokens=2000)
 
-print(ctx.token_count)       # never exceeds max_tokens
+print(ctx.token_count)  # never exceeds max_tokens
 for citation in ctx.citations:
-    print(citation)          # [1] docs/retries.md:12-34
+    print(citation)  # [1] docs/retries.md:12-34
 ```
 
 Under the hood, `context()` runs a pipeline of small, swappable steps:
@@ -145,10 +145,10 @@ was included.
 ### Output formats
 
 ```python
-ctx.to_text()       # plain text with trailing "[n] path:start-end" citations
-ctx.to_markdown()   # fenced code blocks for code paths, blockquotes for prose
-ctx.to_xml()        # <context><passage index="1" ref="...">...</passage></context>
-ctx.to_json()       # full structure, including matched-term highlight offsets
+ctx.to_text()  # plain text with trailing "[n] path:start-end" citations
+ctx.to_markdown()  # fenced code blocks for code paths, blockquotes for prose
+ctx.to_xml()  # <context><passage index="1" ref="...">...</passage></context>
+ctx.to_json()  # full structure, including matched-term highlight offsets
 ctx.to_text(mark=True)  # wraps matched query terms, e.g. with >>term<<
 ```
 
@@ -171,11 +171,11 @@ prompt = r.prompt(
 r.context(
     "query",
     max_tokens=2000,
-    window=3,              # lines of neighboring context to pull in
-    dedup_threshold=90,     # fuzzy-ratio cutoff for near-duplicates
-    diversify=True,         # reorder by Maximal Marginal Relevance
-    compress=True,          # keep only the most query-relevant sentences/lines
-    query_expansion=True,   # pseudo-relevance feedback (RM3-style), off by default
+    window=3,  # lines of neighboring context to pull in
+    dedup_threshold=90,  # fuzzy-ratio cutoff for near-duplicates
+    diversify=True,  # reorder by Maximal Marginal Relevance
+    compress=True,  # keep only the most query-relevant sentences/lines
+    query_expansion=True,  # pseudo-relevance feedback (RM3-style), off by default
 )
 ```
 
@@ -195,9 +195,11 @@ r.context("query", max_tokens=2000, token_counter=TiktokenCounter())
 ```python
 from ragless.context import ContextStep, Pack
 
+
 class DropShortPassages(ContextStep):
     def run(self, passages, state):
         return [p for p in passages if len(p.text) > 40]
+
 
 r.context("query", max_tokens=2000, pipeline=[DropShortPassages(), Pack()])
 ```
