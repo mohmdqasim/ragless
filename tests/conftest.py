@@ -87,3 +87,62 @@ def sample_corpus(tmp_path):
         "Only changed files are re-embedded on the next run.\n"
     )
     return docs
+
+
+@pytest.fixture
+def linked_docs(tmp_path):
+    """A small set of markdown docs linked together, for graph edge tests."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    (docs / "auth.md").write_text(
+        "# Auth\n"
+        "\n"
+        "Users log in with a password. See [retry policy](./retry.md#backoff) "
+        "for how failed logins are retried.\n"
+    )
+    (docs / "retry.md").write_text(
+        "# Retry policy\n"
+        "\n"
+        "## Backoff\n"
+        "\n"
+        "Exponential backoff schedule: 1s, 2s, 4s, 8s, then give up.\n"
+        "\n"
+        "## Jitter\n"
+        "\n"
+        "A small random jitter is added to each wait to avoid thundering herds.\n"
+    )
+    (docs / "support.md").write_text(
+        "# Support runbook\n\nFor refund questions see docs/policy.md directly.\n"
+    )
+    (docs / "policy.md").write_text(
+        "# Refund policy\n\nRefunds are issued within fourteen days of purchase.\n"
+    )
+    (docs / "weather.md").write_text(
+        "Weather note: it might rain tomorrow in the mountains, forecast cloudy.\n"
+    )
+    return docs
+
+
+@pytest.fixture
+def python_project(tmp_path):
+    """A tiny multi-file Python project, for import/symbol graph edge tests."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "util.py").write_text(
+        "def backoff(attempt):\n"
+        "    return 2 ** attempt\n"
+        "\n"
+        "\n"
+        "class RetryPolicy:\n"
+        "    def wait(self, attempt):\n"
+        "        return backoff(attempt)\n"
+    )
+    (pkg / "client.py").write_text(
+        "from pkg.util import backoff\n\n\ndef call_with_retry():\n    return backoff(3)\n"
+    )
+    (pkg / "unrelated.py").write_text(
+        "def unrelated_function():\n    return 'nothing to do with retries'\n"
+    )
+    return tmp_path
