@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ragless"
+version = "0.1.0"
+description = "File-based retrieval for RAG, no vector database required"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "ragless contributors" }]
+keywords = ["rag", "retrieval", "bm25", "search", "embeddings", "information-retrieval"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Indexing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "rapidfuzz>=3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+semantic = ["fastembed>=0.3"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.6",
+    "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/qasim-ensi-ai/ragless"
+Repository = "https://github.com/qasim-ensi-ai/ragless"
+Issues = "https://github.com/qasim-ensi-ai/ragless/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragless"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that download/run a real embedding model (run with --run-slow or -m slow)",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.coverage.run]
+source = ["ragless"]
+branch = true
