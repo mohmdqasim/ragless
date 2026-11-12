@@ -27,14 +27,23 @@ def pytest_collection_modifyitems(config, items):
 class FakeEmbedder(Embedder):
     """Deterministic, dependency-free stand-in for a real embedding model.
 
-    Produces a tiny hashed bag-of-words vector so that semantically similar
-    text (sharing words) lands close together under cosine similarity,
-    without needing to download a real model in tests.
+    Produces a bag-of-words vector (one dimension per distinct word, assigned
+    on first sight) so that semantically similar text (sharing words) lands
+    close together under cosine similarity, without needing to download a
+    real model in tests. Unlike hashing words with the builtin ``hash()``,
+    this doesn't depend on Python's per-process hash randomization, so it's
+    reproducible across runs/processes/machines.
     """
 
-    def __init__(self, dim: int = 32) -> None:
+    def __init__(self, dim: int = 256) -> None:
         self.dim = dim
         self.name = f"fake:{dim}"
+        self._vocab: dict[str, int] = {}
+
+    def _index_for(self, word: str) -> int:
+        if word not in self._vocab:
+            self._vocab[word] = len(self._vocab) % self.dim
+        return self._vocab[word]
 
     def embed(self, texts):
         if not texts:
@@ -42,7 +51,7 @@ class FakeEmbedder(Embedder):
         vectors = np.zeros((len(texts), self.dim), dtype=np.float32)
         for row, text in enumerate(texts):
             for word in text.lower().split():
-                vectors[row, hash(word) % self.dim] += 1.0
+                vectors[row, self._index_for(word)] += 1.0
         return vectors
 
 

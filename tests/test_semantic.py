@@ -9,12 +9,18 @@ from ragless.types import Chunk
 
 
 class _CountingEmbedder(Embedder):
-    """Deterministic hashed bag-of-words embedder that counts embed() calls."""
+    """Deterministic bag-of-words embedder that counts embed() calls."""
 
-    def __init__(self, dim: int = 16) -> None:
+    def __init__(self, dim: int = 32) -> None:
         self.dim = dim
         self.name = f"counting:{dim}"
         self.calls = 0
+        self._vocab: dict[str, int] = {}
+
+    def _index_for(self, word: str) -> int:
+        if word not in self._vocab:
+            self._vocab[word] = len(self._vocab) % self.dim
+        return self._vocab[word]
 
     def embed(self, texts):
         self.calls += 1
@@ -23,7 +29,7 @@ class _CountingEmbedder(Embedder):
         vectors = np.zeros((len(texts), self.dim), dtype=np.float32)
         for row, text in enumerate(texts):
             for word in text.lower().split():
-                vectors[row, hash(word) % self.dim] += 1.0
+                vectors[row, self._index_for(word)] += 1.0
         return vectors
 
 
