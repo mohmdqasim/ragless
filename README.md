@@ -17,34 +17,6 @@ for hit in r.search("how do I configure retries", mode="hybrid"):
     print(hit.text)
 ```
 
-## Why
-
-Most "RAG" tutorials reach for a vector database before checking whether they
-need one. For a folder of a few thousand files, plain keyword search (BM25),
-fuzzy matching, and a small local embedding model get you most of the way
-there, with:
-
-- No server to run, no API keys, no network calls (semantic search runs a
-  small model locally via [fastembed](https://github.com/qdrant/fastembed)).
-- No ingestion pipeline: point it at a directory and it chunks and indexes on
-  construction.
-- Caching as plain sidecar files (`.npy` + `.json`) next to your index, not a
-  database you have to back up and migrate.
-- Every result keeps the file path and line range it came from.
-
-| | ragless | vector DB (Pinecone/Chroma/pgvector) |
-|---|---|---|
-| Infra | none | a running database/service |
-| Setup | `Retriever("./docs")` | provision, configure, ingest |
-| Keyword search | built in (BM25) | usually bolted on separately |
-| Fuzzy/typo tolerance | built in | usually absent |
-| Good for | a few thousand files, local tools, CLIs, CI | large, constantly-changing, multi-tenant corpora |
-| Cold start | instant | needs the service up and reachable |
-
-If you need to search tens of millions of chunks with concurrent writers
-across a fleet of machines, use a vector database. If you need to search the
-docs folder sitting next to your code, `ragless` is simpler.
-
 ## Install
 
 ```bash
@@ -143,6 +115,34 @@ r = Retriever("./docs", engines={"bm25": MyRetriever(), "fuzzy": FuzzyRetriever(
 
 Implement `ragless.chunking.Chunker`, `ragless.retrievers.base.BaseRetriever`,
 or `ragless.embedders.base.Embedder` to plug in your own.
+
+## Why
+
+Most "RAG" tutorials reach for a vector database before checking whether they
+need one. For a folder of a few thousand files, plain keyword search (BM25),
+fuzzy matching, and a small local embedding model get you most of the way
+there, with:
+
+- No server to run, no API keys, no network calls (semantic search runs a
+  small model locally via [fastembed](https://github.com/qdrant/fastembed)).
+- No ingestion pipeline: point it at a directory and it chunks and indexes on
+  construction.
+- Caching as plain sidecar files (`.npy` + `.json`) next to your index, not a
+  database you have to back up and migrate.
+- Every result keeps the file path and line range it came from.
+
+| | ragless | vector DB (Pinecone/Chroma/pgvector) |
+|---|---|---|
+| Infra | none | a running database/service |
+| Setup | `Retriever("./docs")` | provision, configure, ingest |
+| Keyword search | built in (BM25) | usually bolted on separately |
+| Fuzzy/typo tolerance | built in | usually absent |
+| Good for | a few thousand files, local tools, CLIs, CI | large, constantly-changing, multi-tenant corpora |
+| Cold start | instant | needs the service up and reachable |
+
+If you need to search tens of millions of chunks with concurrent writers
+across a fleet of machines, use a vector database. If you need to search the
+docs folder sitting next to your code, `ragless` is simpler.
 
 ## How it works
 

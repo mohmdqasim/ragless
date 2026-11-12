@@ -6,10 +6,11 @@ build-backend = "hatchling.build"
 name = "ragless"
 version = "0.1.0"
 description = "File-based retrieval for RAG, no vector database required"
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
 requires-python = ">=3.10"
-authors = [{ name = "ragless contributors" }]
+authors = [{ name = "Qasim Arshad", email = "mohmdqasim0@gmail.com" }]
+maintainers = [{ name = "Qasim Arshad", email = "mohmdqasim0@gmail.com" }]
 keywords = ["rag", "retrieval", "bm25", "search", "embeddings", "information-retrieval"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -41,6 +42,7 @@ dev = [
 Homepage = "https://github.com/qasim-ensi-ai/ragless"
 Repository = "https://github.com/qasim-ensi-ai/ragless"
 Issues = "https://github.com/qasim-ensi-ai/ragless/issues"
+Changelog = "https://github.com/qasim-ensi-ai/ragless/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ragless"]
