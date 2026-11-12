@@ -8,3 +8,5 @@ sidecar files. There is no database or manifest to keep in sync.
 On the next run, each source file's signature is checked against its cached
 entry. Only files that changed are re-embedded; everything else is loaded
 straight from disk.
+
+See [installation](../installation.md) for how to enable the `semantic` extra.

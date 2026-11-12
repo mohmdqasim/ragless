@@ -26,6 +26,8 @@ def _load_example(name: str):
         "in_memory_text.py",
         "context_for_llm.py",
         "prompt_templates.py",
+        "graph_retrieval.py",
+        "graph_export.py",
     ],
 )
 def test_fast_example_runs_without_error(name, capsys):
