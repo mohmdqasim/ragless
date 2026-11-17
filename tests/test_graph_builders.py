@@ -151,6 +151,99 @@ def test_symbol_edges_regex_definitions_for_js(tmp_path):
     assert any(e.reason == "defines 'distinctiveName', used here" for e in graph.edges)
 
 
+def test_symbol_edges_handles_dollar_sign_js_identifiers(tmp_path):
+    (tmp_path / "a.js").write_text("function $scope() {\n  return 1;\n}\n")
+    (tmp_path / "b.js").write_text("const x = $scope();\n")
+    graph, _ = _graph_for(tmp_path, [SymbolEdges(min_name_length=1)])
+    assert any(e.reason == "defines '$scope', used here" for e in graph.edges)
+
+
+def _brute_force_symbol_edges(ctx, builder):
+    """The old O(definitions x chunks) implementation, kept only here to
+    verify the new inverted-index implementation produces identical edges
+    for plain \\w identifiers."""
+    import re as _re
+
+    from ragless.graph.builders import (
+        _COMMON_SYMBOL_NAMES,
+        BuilderResult,
+        Edge,
+        _chunk_for_line,
+    )
+
+    definitions: list[tuple[str, object]] = []
+    for doc_id, doc_chunks in ctx.chunks_by_doc.items():
+        if doc_id.endswith(".py"):
+            import ast as _ast
+
+            try:
+                tree = _ast.parse(ctx.doc_text.get(doc_id, ""))
+            except SyntaxError:
+                continue
+            for node in _ast.walk(tree):
+                if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                    chunk = _chunk_for_line(doc_chunks, node.lineno)
+                    if chunk is not None:
+                        definitions.append((node.name, chunk))
+
+    result = BuilderResult()
+    if not definitions:
+        return result
+    n_chunks = len(ctx.chunks)
+    max_usage_chunks = max(1, int(n_chunks * builder.max_usage_fraction))
+    for name, def_chunk in definitions:
+        if len(name) < builder.min_name_length or name in _COMMON_SYMBOL_NAMES:
+            continue
+        pattern = _re.compile(rf"\b{_re.escape(name)}\b")
+        counts = []
+        for c in ctx.chunks:
+            if c.id == def_chunk.id:
+                continue
+            n = len(pattern.findall(c.text))
+            if n:
+                counts.append((n, c))
+        if not counts or len(counts) > max_usage_chunks:
+            continue
+        counts.sort(key=lambda pair: pair[0], reverse=True)
+        for _count, usage_chunk in counts[: builder.max_usage_edges]:
+            result.edges.append(
+                Edge(
+                    src=def_chunk.id,
+                    dst=usage_chunk.id,
+                    type=builder.name,
+                    weight=builder.weight,
+                    reason=f"defines {name!r}, used here",
+                )
+            )
+    return result
+
+
+def test_symbol_edges_inverted_index_matches_brute_force_for_word_identifiers(tmp_path):
+    import random
+
+    rng = random.Random(7)
+    names = [f"helper_{i}" for i in range(30)]
+    for i, name in enumerate(names):
+        lines = [f"def {name}():", "    pass", ""]
+        (tmp_path / f"def_{i}.py").write_text("\n".join(lines))
+    for j in range(60):
+        used = rng.sample(names, k=rng.randint(1, 4))
+        lines = [f"{n}()" for n in used]
+        (tmp_path / f"usage_{j}.py").write_text("\n".join(lines))
+
+    r = Retriever(str(tmp_path))
+    ctx = make_build_context(r._chunks, r._chunk_doc_id, r._doc_text)
+    builder = SymbolEdges()
+
+    fast = builder.build(ctx)
+    slow = _brute_force_symbol_edges(ctx, builder)
+
+    fast_set = sorted((e.src, e.dst, e.type, e.weight, e.reason) for e in fast.edges)
+    slow_set = sorted((e.src, e.dst, e.type, e.weight, e.reason) for e in slow.edges)
+    assert fast_set == slow_set
+    assert len(fast_set) > 0  # the corpus actually produced edges, not a vacuous pass
+
+
 # --- Structure -----------------------------------------------------------------
 
 

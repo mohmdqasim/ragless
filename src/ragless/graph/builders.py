@@ -413,10 +413,15 @@ def _resolve_js_import(source_path: str, spec: str, js_paths: set[str]) -> str |
 
 # --- Symbols -------------------------------------------------------------------
 
+# JS/TS identifiers may contain `$` (e.g. `$scope`, `jQuery$`), which plain `\w`
+# doesn't cover; both the definition regex and the usage tokenizer below need to
+# agree on this shape or a `$`-named definition could never find its usages.
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*")
+
 _JS_DEF_RE = re.compile(
-    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s+([A-Za-z_]\w*)"
-    r"|class\s+([A-Za-z_]\w*)"
-    r"|const\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\()",
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)"
+    r"|class\s+([A-Za-z_$][\w$]*)"
+    r"|const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\()",
     re.MULTILINE,
 )
 
@@ -462,24 +467,35 @@ class SymbolEdges(EdgeBuilder):
         if not definitions:
             return result
 
+        candidate_names = {
+            name
+            for name, _chunk in definitions
+            if len(name) >= self.min_name_length and name not in _COMMON_SYMBOL_NAMES
+        }
+        if not candidate_names:
+            return result
+
+        # Tokenize every chunk exactly once, keeping only tokens that are a
+        # candidate definition name, then invert into name -> [(count, chunk)].
+        # This replaces the old O(definitions x chunks) full-text rescan per
+        # definition with one O(chunks) pass plus O(definitions) dict lookups.
+        inverted: dict[str, list[tuple[int, Chunk]]] = defaultdict(list)
+        for c in ctx.chunks:
+            counts = Counter(_IDENTIFIER_RE.findall(c.text))
+            for name in candidate_names.intersection(counts):
+                inverted[name].append((counts[name], c))
+
         n_chunks = len(ctx.chunks)
         max_usage_chunks = max(1, int(n_chunks * self.max_usage_fraction))
 
         for name, def_chunk in definitions:
-            if len(name) < self.min_name_length or name in _COMMON_SYMBOL_NAMES:
+            if name not in candidate_names:
                 continue
-            pattern = re.compile(rf"\b{re.escape(name)}\b")
-            counts: list[tuple[int, Chunk]] = []
-            for c in ctx.chunks:
-                if c.id == def_chunk.id:
-                    continue
-                n = len(pattern.findall(c.text))
-                if n:
-                    counts.append((n, c))
-            if not counts or len(counts) > max_usage_chunks:
+            usages = [(n, c) for n, c in inverted.get(name, ()) if c.id != def_chunk.id]
+            if not usages or len(usages) > max_usage_chunks:
                 continue
-            counts.sort(key=lambda pair: pair[0], reverse=True)
-            for _count, usage_chunk in counts[: self.max_usage_edges]:
+            usages.sort(key=lambda pair: pair[0], reverse=True)
+            for _count, usage_chunk in usages[: self.max_usage_edges]:
                 result.edges.append(
                     Edge(
                         src=def_chunk.id,
