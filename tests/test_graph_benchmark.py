@@ -156,3 +156,63 @@ def test_graph_build_and_query_latency_on_synthetic_corpus(tmp_path, capsys):
     assert chunk_count > 1000  # in the right ballpark for the "~5k chunks" target
     assert build_time < 30.0  # generous upper bound so this isn't flaky in CI
     assert avg_query_latency < 5.0
+
+
+def _mixed_corpus_1k(tmp_path, n_py_files=130, n_usage_files=800):
+    """~1k chunks: lots of Python definitions + usages (exercises SymbolEdges)
+    plus plain text files (exercises FuzzyRetriever) -- the two things v0.3.1
+    sped up."""
+    docs = tmp_path / "mixed"
+    docs.mkdir()
+    rng = random.Random(3)
+    names = [f"func_{i}" for i in range(n_py_files)]
+    for i, name in enumerate(names):
+        (docs / f"def_{i}.py").write_text(f"def {name}():\n    return {i}\n")
+    for j in range(n_usage_files):
+        used = rng.sample(names, k=rng.randint(1, 4))
+        (docs / f"usage_{j}.py").write_text("\n".join(f"{n}()" for n in used))
+    for k in range(70):
+        (docs / f"note_{k}.md").write_text(
+            f"Note {k} discusses retry policies and backoff schedules in some detail.\n"
+        )
+    return docs
+
+
+def test_benchmark_warm_start_graph_and_hybrid_latency(tmp_path, capsys):
+    cache_dir = tmp_path / ".cache"
+    docs = _mixed_corpus_1k(tmp_path)
+
+    # cold build: populates the on-disk graph cache
+    cold = Retriever(str(docs), cache_dir=str(cache_dir))
+    chunk_count = len(cold)
+    _ = cold.graph
+
+    # warm start: a fresh Retriever against the same unchanged corpus + cache_dir
+    start = time.perf_counter()
+    warm = Retriever(str(docs), cache_dir=str(cache_dir))
+    graph = warm.graph
+    warm_start_time = time.perf_counter() - start
+
+    queries = [
+        "retry policy backoff",
+        "func_5 usage",
+        "note discusses schedules",
+        "func_100",
+    ]
+    latencies = []
+    for q in queries:
+        for _ in range(5):
+            start = time.perf_counter()
+            warm.search(q, top_k=10)
+            latencies.append(time.perf_counter() - start)
+    latencies.sort()
+    median_latency = latencies[len(latencies) // 2]
+
+    with capsys.disabled():
+        print(f"\nmixed corpus: {chunk_count} chunks, {len(graph.edges)} edges")
+        print(f"warm start (Retriever() + .graph, cache_dir populated): {warm_start_time:.3f}s")
+        print(f"median hybrid query latency: {median_latency * 1000:.2f}ms")
+
+    assert chunk_count > 800  # in the right ballpark for the "~1k chunks" target
+    assert warm_start_time < 5.0  # "a few seconds", generously bounded for CI
+    assert median_latency < 0.2  # 200ms is generous; the old fuzzy path could exceed this alone
