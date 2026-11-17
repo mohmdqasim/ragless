@@ -4,8 +4,10 @@ See DECISIONS.md for the combined-score formula. Short version: an expanded
 node's raw score comes from personalized PageRank (restart = normalized seed
 scores) or bounded BFS with per-hop decay; then, unless ``keep_seeds=False``,
 every non-seed node's raw score is rescaled so the best one never exceeds
-the weakest seed's score -- seeds are never outranked by expansion unless
-the caller explicitly asks for that by passing ``keep_seeds=False``.
+the weakest *protected* seed's score (see ``protect_top_seeds``) -- those
+seeds are never outranked by expansion unless the caller explicitly asks for
+that by passing ``keep_seeds=False``. Seeds outside the protected set
+compete with expanded results on equal footing.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ def expand_from_seeds(
     max_expanded: int = 20,
     min_score: float = 0.0,
     keep_seeds: bool = True,
+    protect_top_seeds: int | None = None,
     edge_lookup: Mapping[tuple[str, str], Edge] | None = None,
 ) -> dict[str, ExpandedNode]:
     """Expand ``seed_scores`` across ``adjacency``. Returns ``{chunk_id: ExpandedNode}``.
@@ -56,6 +59,15 @@ def expand_from_seeds(
     Always includes every seed (as an :class:`ExpandedNode` with ``is_seed=True``
     and its original score unchanged), plus up to ``max_expanded`` additional
     nodes above ``min_score``.
+
+    ``protect_top_seeds`` (only consulted when ``keep_seeds=True``) caps the
+    rescaling floor to the weakest of just the top-N seeds by score, instead
+    of the weakest of *all* seeds -- seeds outside that top-N then compete
+    with expanded results on equal footing for the remaining slots. ``None``
+    (the default here) protects every seed, matching the original strict
+    behavior; ``Retriever.search()``/``.context()`` pass an explicit value
+    derived from ``top_k`` so expansion isn't invisible whenever there are
+    already ``top_k`` or more seeds.
     """
     positive_seeds = {k: v for k, v in seed_scores.items() if v > 0}
     if not positive_seeds:
@@ -75,10 +87,16 @@ def expand_from_seeds(
 
     non_seed_scores = {k: v for k, v in raw_scores.items() if k not in positive_seeds and v > 0}
     if keep_seeds and non_seed_scores:
-        weakest_seed = min(positive_seeds.values())
-        strongest_expanded = max(non_seed_scores.values())
-        scale = weakest_seed / strongest_expanded if strongest_expanded > 0 else 1.0
-        non_seed_scores = {k: v * scale for k, v in non_seed_scores.items()}
+        if protect_top_seeds is None:
+            protected_scores = positive_seeds.values()
+        else:
+            ranked_seeds = sorted(positive_seeds.values(), reverse=True)
+            protected_scores = ranked_seeds[: max(0, protect_top_seeds)]
+        if protected_scores:
+            weakest_protected = min(protected_scores)
+            strongest_expanded = max(non_seed_scores.values())
+            scale = weakest_protected / strongest_expanded if strongest_expanded > 0 else 1.0
+            non_seed_scores = {k: v * scale for k, v in non_seed_scores.items()}
 
     ranked = sorted(non_seed_scores.items(), key=lambda kv: kv[1], reverse=True)
     nodes: dict[str, ExpandedNode] = {
@@ -158,6 +176,7 @@ class GraphExpand(ContextStep):
         max_expanded: int = 20,
         min_score: float = 0.0,
         keep_seeds: bool = True,
+        protect_top_seeds: int | None = None,
         edge_weights: dict[str, float] | None = None,
     ) -> None:
         self.chunk_graph = chunk_graph
@@ -166,6 +185,7 @@ class GraphExpand(ContextStep):
         self.max_expanded = max_expanded
         self.min_score = min_score
         self.keep_seeds = keep_seeds
+        self.protect_top_seeds = protect_top_seeds
         self.edge_weights = edge_weights
 
     def run(self, passages: list[Passage], state: PipelineState) -> list[Passage]:
@@ -185,6 +205,7 @@ class GraphExpand(ContextStep):
             max_expanded=self.max_expanded,
             min_score=self.min_score,
             keep_seeds=self.keep_seeds,
+            protect_top_seeds=self.protect_top_seeds,
             edge_lookup=self.chunk_graph.edge_lookup(),
         )
 

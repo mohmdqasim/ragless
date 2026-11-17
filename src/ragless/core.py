@@ -212,6 +212,7 @@ class Retriever:
         edge_weights: dict[str, float] | None = None,
         min_score: float = 0.0,
         keep_seeds: bool = True,
+        protect_top_seeds: int | None = None,
     ) -> list[SearchResult]:
         """Search the indexed corpus.
 
@@ -241,10 +242,16 @@ class Retriever:
             edge_weights: Per-edge-type multiplier, e.g. ``{"link": 2.0}``,
                 applied at query time without rebuilding the graph.
             min_score: Minimum expansion score for a node to be included.
-            keep_seeds: If ``True`` (default), expansion can never outrank a
-                seed -- the strongest non-seed result is capped at the
-                weakest seed's score. ``False`` lets expanded results compete
-                purely on score, so a seed could end up ranked lower or cut.
+            keep_seeds: If ``True`` (default), expansion can never outrank
+                the *protected* seeds (see ``protect_top_seeds``). ``False``
+                lets expanded results compete purely on score against every
+                seed, so even a protected seed could end up ranked lower.
+            protect_top_seeds: How many top-scoring seeds are protected from
+                being outranked by expansion. Defaults to
+                ``max(1, top_k // 2)`` -- half the result budget stays
+                guaranteed-relevant seeds, the other half is open for the
+                graph to compete for. Pass ``top_k`` (or larger) to restore
+                the old "protect every seed" behavior.
 
         Returns:
             Up to ``top_k`` :class:`~ragless.types.SearchResult`, best first.
@@ -268,6 +275,9 @@ class Retriever:
 
         graph_reasons: dict[str, list[str]] = {}
         if graph and candidates:
+            effective_protect = (
+                protect_top_seeds if protect_top_seeds is not None else max(1, top_k // 2)
+            )
             candidates, graph_reasons = self._expand_with_graph(
                 candidates,
                 hops=hops,
@@ -276,6 +286,7 @@ class Retriever:
                 edge_weights=edge_weights,
                 min_score=min_score,
                 keep_seeds=keep_seeds,
+                protect_top_seeds=effective_protect,
             )
 
         if rerank:
@@ -301,6 +312,7 @@ class Retriever:
         edge_weights: dict[str, float] | None,
         min_score: float,
         keep_seeds: bool,
+        protect_top_seeds: int | None = None,
     ) -> tuple[list[tuple[str, float, dict[str, float]]], dict[str, list[str]]]:
         seed_scores = {chunk_id: score for chunk_id, score, _raw in candidates}
         nodes: dict[str, ExpandedNode] = expand_from_seeds(
@@ -311,6 +323,7 @@ class Retriever:
             max_expanded=max_expanded,
             min_score=min_score,
             keep_seeds=keep_seeds,
+            protect_top_seeds=protect_top_seeds,
             edge_lookup=self.graph.edge_lookup(),
         )
         existing_ids = {chunk_id for chunk_id, _, _ in candidates}
@@ -354,6 +367,7 @@ class Retriever:
         edge_weights: dict[str, float] | None = None,
         min_score: float = 0.0,
         keep_seeds: bool = True,
+        protect_top_seeds: int | None = None,
     ) -> Context:
         """Search, then assemble ready-to-use context fitted to a token budget.
 
@@ -396,8 +410,12 @@ class Retriever:
                 if ``pipeline=`` is given explicitly -- add
                 ``GraphExpand(r.graph, ...)`` to your own list instead.
             hops, max_expanded, graph_mode, edge_weights, min_score,
-                keep_seeds: Forwarded to :class:`~ragless.graph.GraphExpand`
-                when ``graph=True``; see :meth:`search` for what each means.
+                keep_seeds, protect_top_seeds: Forwarded to
+                :class:`~ragless.graph.GraphExpand` when ``graph=True``; see
+                :meth:`search` for what each means. ``protect_top_seeds``
+                defaults to ``max(1, pool_k // 2)`` here, where ``pool_k``
+                is the candidate pool size (``top_k`` or a budget-derived
+                default).
 
         See :meth:`search` for ``mode``, ``filters``, ``path_filter``,
         ``rerank``, and ``fetch_k``.
@@ -430,6 +448,9 @@ class Retriever:
 
         effective_pipeline = list(pipeline) if pipeline is not None else None
         if graph and effective_pipeline is None:
+            effective_protect = (
+                protect_top_seeds if protect_top_seeds is not None else max(1, pool_k // 2)
+            )
             effective_pipeline = [
                 GraphExpand(
                     self.graph,
@@ -438,6 +459,7 @@ class Retriever:
                     max_expanded=max_expanded,
                     min_score=min_score,
                     keep_seeds=keep_seeds,
+                    protect_top_seeds=effective_protect,
                     edge_weights=edge_weights,
                 ),
                 *build_default_pipeline(

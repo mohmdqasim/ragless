@@ -46,6 +46,39 @@ def test_expand_keep_seeds_false_allows_outranking():
     assert any(n.score > nodes[0].score for n in non_seed) or True  # no crash either way
 
 
+def test_expand_protect_top_seeds_none_protects_all_seeds():
+    adj = _line_adj(5)
+    nodes = expand_from_seeds(
+        adj, {0: 1.0, 2: 0.5, 4: 0.01}, keep_seeds=True, protect_top_seeds=None, max_expanded=10
+    )
+    expanded_scores = [n.score for n in nodes.values() if not n.is_seed]
+    assert expanded_scores
+    assert max(expanded_scores) <= 0.01 + 1e-9  # capped below the *weakest* of all seeds
+
+
+def test_expand_protect_top_seeds_only_caps_relative_to_protected_subset():
+    adj = _line_adj(5)
+    # three seeds: strong (0), medium (2), weak (4). Protect only the top 1 (score 1.0):
+    # expansion should be capped below 1.0, not below the weak seed's 0.01 -- so it can
+    # end up scoring *above* the weak seed, letting it compete for that slot.
+    nodes = expand_from_seeds(
+        adj, {0: 1.0, 2: 0.5, 4: 0.01}, keep_seeds=True, protect_top_seeds=1, max_expanded=10
+    )
+    expanded_scores = [n.score for n in nodes.values() if not n.is_seed]
+    assert expanded_scores
+    assert max(expanded_scores) <= 1.0 + 1e-9
+    assert max(expanded_scores) > 0.01  # not capped down to the weak seed's level
+
+
+def test_expand_protect_top_seeds_zero_behaves_like_keep_seeds_false():
+    adj = _line_adj(5)
+    protected = expand_from_seeds(adj, {0: 1.0}, keep_seeds=True, protect_top_seeds=0, hops=4)
+    unprotected = expand_from_seeds(adj, {0: 1.0}, keep_seeds=False, hops=4)
+    protected_scores = {n.chunk_id: n.score for n in protected.values() if not n.is_seed}
+    unprotected_scores = {n.chunk_id: n.score for n in unprotected.values() if not n.is_seed}
+    assert protected_scores == unprotected_scores
+
+
 def test_expand_max_expanded_limits_count():
     adj = _line_adj(10)
     nodes = expand_from_seeds(adj, {0: 1.0}, hops=9, max_expanded=2)

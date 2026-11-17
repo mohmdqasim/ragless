@@ -4,6 +4,48 @@ from ragless import Context, Retriever
 from ragless.graph import LinkEdges, build_default_edge_builders
 
 
+def _many_seeds_corpus(tmp_path):
+    """auth.md -> retry.md is the only real link; several distractor files each
+    weakly mention the query terms once, so plain hybrid search alone already
+    fills top_k=5 with seeds -- retry.md only has a chance if expansion can
+    compete for one of those slots rather than being capped below all of them."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "auth.md").write_text(
+        "# Auth\n\nUsers log in with a password. See [retry policy](./retry.md).\n"
+    )
+    (docs / "retry.md").write_text(
+        "# Retry policy\n\nExponential backoff schedule: 1s, 2s, 4s, 8s, then give up.\n"
+    )
+    for name in ("weather", "cooking", "sports", "travel"):
+        (docs / f"{name}.md").write_text(
+            f"{name} note, unrelated to login or password, just mentions login once.\n"
+        )
+    return docs
+
+
+def test_search_graph_default_surfaces_multi_hop_answer_in_top_5(tmp_path):
+    docs = _many_seeds_corpus(tmp_path)
+    r = Retriever(str(docs))
+
+    seed_count = len(r.search("password login", top_k=50))
+    assert seed_count >= 5  # enough seeds to have filled top_k=5 on their own
+
+    plain = r.search("password login", top_k=5)
+    assert not any(h.path.endswith("retry.md") for h in plain)
+
+    with_graph = r.search("password login", top_k=5, graph=True)
+    assert any(h.path.endswith("retry.md") for h in with_graph)
+    assert len(with_graph) <= 5
+
+
+def test_context_graph_default_surfaces_multi_hop_answer(tmp_path):
+    docs = _many_seeds_corpus(tmp_path)
+    r = Retriever(str(docs))
+    ctx = r.context("password login", max_tokens=2000, top_k=5, graph=True)
+    assert any(p.path and p.path.endswith("retry.md") for p in ctx.passages)
+
+
 def test_search_graph_true_adds_linked_result_not_in_plain_top_k(linked_docs):
     r = Retriever(str(linked_docs))
     plain = r.search("password login", top_k=1, fetch_k=1)
