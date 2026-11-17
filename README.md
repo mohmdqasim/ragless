@@ -234,8 +234,13 @@ ctx = r.context("how does login retry work", max_tokens=2000, graph=True)
 Off by default; turn it on with `graph=True` on `search()` or `context()`.
 Tune it with `hops`, `max_expanded`, `graph_mode` (`"pagerank"` or `"bfs"`),
 `edge_weights` (reweight edge types at query time, e.g. `{"link": 2.0}`,
-without rebuilding the graph), `min_score`, and `keep_seeds` (default
-`True`: a seed is never outranked by something the graph pulled in).
+without rebuilding the graph), and `min_score`. `keep_seeds` (default
+`True`) protects the top `max(1, top_k // 2)` seeds from ever being
+outranked by expansion -- half the result budget stays guaranteed-relevant,
+the other half is open for the graph to compete for. Override how many
+seeds are protected with `protect_top_seeds=` (e.g. `protect_top_seeds=top_k`
+to restore "protect every seed"), or set `keep_seeds=False` to let
+expansion compete purely on score with no protection at all.
 
 ### Inspecting the graph directly
 
@@ -290,8 +295,11 @@ with or without it. If your corpus is mostly standalone files, don't expect
 much lift.
 
 On a synthetic ~5,000-chunk corpus (700 linked markdown files): building the
-graph took ~4.9s, and an average `graph=True` query (PageRank, 2 hops) added
-~25ms over plain hybrid search. Reproduce with
+graph took ~5.4s, and an average `graph=True` query (PageRank, 2 hops) added
+~19ms over plain hybrid search. On a ~1,000-chunk mixed corpus (lots of
+Python definitions/usages plus plain text) with a warm `cache_dir`: starting
+a fresh `Retriever` and accessing `.graph` took ~0.07s, and the median
+`search()` call took ~0.2ms. Reproduce with
 `pytest --run-slow -m slow tests/test_graph_benchmark.py -s`.
 
 ## Why
@@ -331,7 +339,10 @@ docs folder sitting next to your code, `ragless` is simpler.
    chunk (`ragless.chunking.LineChunker`, pluggable).
 3. **Index** -- each configured engine builds its own index over the chunks:
    - `BM25Retriever`: classic Okapi BM25 over tokenized text (NumPy).
-   - `FuzzyRetriever`: `rapidfuzz` string similarity.
+   - `FuzzyRetriever`: fuzzy-matches query terms against the corpus
+     vocabulary (`rapidfuzz`), then scores chunks BM25-style by the matched
+     terms -- catches typos without comparing the whole query against every
+     chunk's full text (`mode="full_text"` restores that older behavior).
    - `SemanticRetriever`: dense embeddings (`fastembed`) with cosine
      similarity (NumPy), cached to disk as `.npy`/`.json` sidecar files.
 4. **Search** -- query every configured engine, fuse their rankings with

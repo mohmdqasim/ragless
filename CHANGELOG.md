@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-11-18
+
+### Fixed
+
+- `SymbolEdges` was O(definitions x chunks) -- it rescanned every chunk's
+  full text for every definition. Now tokenizes each chunk once and builds
+  a name -> chunks inverted index, so each definition is a dict lookup
+  instead of a corpus rescan (~27s -> ~11ms on a 930-chunk/~1,300-definition
+  corpus in testing). Edges are identical to the old implementation for
+  plain-word identifiers (tested directly against a kept-for-comparison copy
+  of the old algorithm); `$` in JS/TS identifiers is now also handled
+  correctly in both the definition regex and the usage tokenizer.
+- `FuzzyRetriever` ran a fuzzy-match scorer against every chunk's full text
+  per query. Now defaults to `mode="vocabulary"`: fuzzy-matches query terms
+  against the (much smaller) corpus vocabulary, then scores chunks
+  BM25-style by the matched terms -- faster and less noisy (a typo no
+  longer pulls in chunks that merely share a long substring). The old
+  behavior is still available via `mode="full_text"`.
+- `search(graph=True)`/`context(graph=True)` with the default
+  `keep_seeds=True` never surfaced expanded results whenever there were
+  already `top_k` or more seeds, making graph expansion invisible at normal
+  result sizes. `keep_seeds=True` now only protects the top
+  `max(1, top_k // 2)` seeds from being outranked by expansion (tunable via
+  the new `protect_top_seeds=` argument); the rest of the result budget is
+  open for expansion to compete for.
+
+### Added
+
+- A benchmark test asserting a warm-cache `Retriever` start plus `.graph`
+  access stays fast (well under a second in practice) and median hybrid
+  query latency stays low on a ~1,000-chunk corpus.
+
 ## [0.3.0] - 2026-11-13
 
 ### Added
