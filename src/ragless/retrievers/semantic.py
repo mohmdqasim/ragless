@@ -75,6 +75,14 @@ class SemanticRetriever(BaseRetriever):
         self._vectors = _normalize_rows(matrix)
         self._chunk_ids = all_ids
 
+    def vectors_by_chunk_id(self) -> dict[str, np.ndarray]:
+        """Already-embedded, already-unit-normalized vectors keyed by chunk id.
+
+        Lets other components (e.g. :class:`~ragless.graph.builders.SemanticKNNEdges`)
+        reuse this retriever's work instead of re-embedding the same chunks.
+        """
+        return dict(zip(self._chunk_ids, self._vectors, strict=True))
+
     def query(self, query: str, top_k: int) -> list[tuple[str, float]]:
         if top_k <= 0 or not self._chunk_ids or not query.strip():
             return []

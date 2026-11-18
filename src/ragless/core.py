@@ -536,7 +536,12 @@ class Retriever:
             builders = (
                 self._edge_builders_override
                 if self._edge_builders_override is not None
-                else build_default_edge_builders(self._semantic_embedder())
+                else build_default_edge_builders(
+                    self._semantic_embedder(),
+                    retriever=self._retrievers.get("semantic"),
+                    cache=EmbeddingCache(self._cache_dir) if self._cache_dir is not None else None,
+                    file_signatures=self._file_signatures,
+                )
             )
             self._chunk_graph = build_or_update_graph(
                 self._cache_dir,

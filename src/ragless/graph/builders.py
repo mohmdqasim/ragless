@@ -10,16 +10,25 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
+from ragless.cache import EmbeddingCache, FileSignature
 from ragless.context._lexical import content_terms
 from ragless.graph.edges import Edge
 from ragless.types import Chunk
 
 if TYPE_CHECKING:
     from ragless.embedders.base import Embedder
+
+
+class _VectorSource(Protocol):
+    """Duck-typed: anything that can hand back its already-embedded vectors
+    by chunk id (e.g. :class:`~ragless.retrievers.semantic.SemanticRetriever`),
+    so :class:`SemanticKNNEdges` can reuse them instead of re-embedding."""
+
+    def vectors_by_chunk_id(self) -> dict[str, np.ndarray]: ...
 
 
 @dataclass
@@ -683,6 +692,13 @@ class SemanticKNNEdges(EdgeBuilder):
 
     Only useful (and only added to the default builder set) when the
     ``semantic`` extra is installed and an embedder is available.
+
+    Never re-embeds a chunk that's already embedded elsewhere: it tries, in
+    order, (1) ``retriever.vectors_by_chunk_id()`` (a live
+    :class:`~ragless.retrievers.semantic.SemanticRetriever`'s in-memory
+    vectors), (2) ``cache`` (the on-disk :class:`~ragless.cache.EmbeddingCache`,
+    per source file), and only calls ``embedder.embed()`` -- in batches of
+    ``embed_batch_size`` -- for whatever's still missing after that.
     """
 
     name = "semantic_knn"
@@ -694,12 +710,54 @@ class SemanticKNNEdges(EdgeBuilder):
         k: int = 5,
         min_similarity: float = 0.5,
         batch_size: int = 256,
+        embed_batch_size: int = 32,
+        retriever: _VectorSource | None = None,
+        cache: EmbeddingCache | None = None,
+        file_signatures: dict[str, FileSignature] | None = None,
     ) -> None:
         self.embedder = embedder
         self.weight = weight
         self.k = k
         self.min_similarity = min_similarity
         self.batch_size = batch_size
+        self.embed_batch_size = embed_batch_size
+        self.retriever = retriever
+        self.cache = cache
+        self.file_signatures = file_signatures or {}
+
+    def _collect_vectors(self, ctx: BuildContext, chunks: list[Chunk]) -> dict[str, np.ndarray]:
+        vectors_by_id: dict[str, np.ndarray] = {}
+
+        if self.retriever is not None and hasattr(self.retriever, "vectors_by_chunk_id"):
+            vectors_by_id.update(self.retriever.vectors_by_chunk_id())
+
+        missing = [c for c in chunks if c.id not in vectors_by_id]
+
+        if missing and self.cache is not None:
+            missing_by_doc: dict[str, list[Chunk]] = defaultdict(list)
+            for c in missing:
+                missing_by_doc[ctx.chunk_doc_id[c.id]].append(c)
+            still_missing: list[Chunk] = []
+            for doc_id, doc_missing in missing_by_doc.items():
+                doc_chunks = ctx.chunks_by_doc.get(doc_id, [])
+                signature = self.file_signatures.get(doc_id)
+                cached = None
+                if signature is not None and doc_chunks:
+                    cached = self.cache.get(doc_id, signature, self.embedder, doc_chunks)
+                if cached is not None:
+                    for c, vec in zip(doc_chunks, cached, strict=True):
+                        vectors_by_id[c.id] = vec
+                else:
+                    still_missing.extend(doc_missing)
+            missing = still_missing
+
+        for start in range(0, len(missing), self.embed_batch_size):
+            batch = missing[start : start + self.embed_batch_size]
+            vectors = self.embedder.embed([c.text for c in batch])
+            for c, vec in zip(batch, vectors, strict=True):
+                vectors_by_id[c.id] = vec
+
+        return vectors_by_id
 
     def build(self, ctx: BuildContext) -> BuilderResult:
         result = BuilderResult()
@@ -708,7 +766,8 @@ class SemanticKNNEdges(EdgeBuilder):
         if n < 2:
             return result
 
-        vectors = self.embedder.embed([c.text for c in chunks]).astype(np.float32)
+        vectors_by_id = self._collect_vectors(ctx, chunks)
+        vectors = np.stack([vectors_by_id[c.id] for c in chunks]).astype(np.float32)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         unit = vectors / norms
@@ -750,8 +809,19 @@ class SemanticKNNEdges(EdgeBuilder):
         return result
 
 
-def build_default_edge_builders(embedder: Embedder | None = None) -> list[EdgeBuilder]:
-    """The default edge-builder set: everything except semantic kNN, which needs an embedder."""
+def build_default_edge_builders(
+    embedder: Embedder | None = None,
+    *,
+    retriever: _VectorSource | None = None,
+    cache: EmbeddingCache | None = None,
+    file_signatures: dict[str, FileSignature] | None = None,
+) -> list[EdgeBuilder]:
+    """The default edge-builder set: everything except semantic kNN, which needs an embedder.
+
+    ``retriever``/``cache``/``file_signatures`` are forwarded to
+    :class:`SemanticKNNEdges` so it reuses already-embedded vectors instead
+    of re-embedding the corpus; see its docstring.
+    """
     builders: list[EdgeBuilder] = [
         LinkEdges(),
         ImportEdges(),
@@ -760,7 +830,11 @@ def build_default_edge_builders(embedder: Embedder | None = None) -> list[EdgeBu
         SharedTermEdges(),
     ]
     if embedder is not None:
-        builders.append(SemanticKNNEdges(embedder))
+        builders.append(
+            SemanticKNNEdges(
+                embedder, retriever=retriever, cache=cache, file_signatures=file_signatures
+            )
+        )
     return builders
 
 
