@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-11-18
+
+### Fixed
+
+- `SemanticKNNEdges` re-embedded every chunk in the corpus in one call on
+  *every* `r.graph` access, regardless of whether a `SemanticRetriever`
+  already held those vectors in memory (warm `cache_dir`) or they were
+  sitting in the on-disk embedding cache. On a 600-file / ~937-chunk corpus
+  this meant ~160s and ~7.6GB peak memory on a warm restart, and embedding
+  everything twice on a cold start. It now reuses an existing
+  `SemanticRetriever`'s vectors (new `SemanticRetriever.vectors_by_chunk_id()`),
+  falls back to the on-disk `EmbeddingCache` per source file, and only calls
+  the embedder for chunks still missing after that -- in batches of
+  `embed_batch_size` (default 32) to keep memory bounded. A warm restart
+  with an unchanged corpus now embeds nothing; edges are unchanged.
+
 ## [0.3.1] - 2026-11-18
 
 ### Fixed

@@ -39,7 +39,7 @@ from ragless.rerank import CrossEncoderReranker, Reranker
 from ragless.retrievers import BaseRetriever, BM25Retriever, FuzzyRetriever, SemanticRetriever
 from ragless.types import Chunk, SearchResult
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = [
     "Retriever",
