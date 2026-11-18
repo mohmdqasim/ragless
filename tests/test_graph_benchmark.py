@@ -216,3 +216,47 @@ def test_benchmark_warm_start_graph_and_hybrid_latency(tmp_path, capsys):
     assert chunk_count > 800  # in the right ballpark for the "~1k chunks" target
     assert warm_start_time < 5.0  # "a few seconds", generously bounded for CI
     assert median_latency < 0.2  # 200ms is generous; the old fuzzy path could exceed this alone
+
+
+def test_benchmark_warm_restart_with_semantic_graph_does_not_reembed(
+    counting_embedder, tmp_path, capsys
+):
+    """The regression this release fixes: semantic kNN graph edges used to
+    re-embed the whole corpus on every single r.graph access, regardless of
+    a warm cache_dir -- ~160s/~7.6GB on a ~1k-chunk corpus in the field."""
+    cache_dir = tmp_path / ".cache"
+    docs = _mixed_corpus_1k(tmp_path, n_py_files=130, n_usage_files=800)
+
+    cold = Retriever(
+        str(docs),
+        engines=["bm25", "fuzzy", "semantic"],
+        embedder=counting_embedder,
+        cache_dir=str(cache_dir),
+    )
+    chunk_count = len(cold)
+    cold_graph = cold.graph
+    cold_embedded = len(counting_embedder.embedded_texts)
+    counting_embedder.reset_calls()
+
+    start = time.perf_counter()
+    warm = Retriever(
+        str(docs),
+        engines=["bm25", "fuzzy", "semantic"],
+        embedder=counting_embedder,
+        cache_dir=str(cache_dir),
+    )
+    warm_graph = warm.graph
+    warm_start_time = time.perf_counter() - start
+    warm_embedded = len(counting_embedder.embedded_texts)
+
+    with capsys.disabled():
+        print(f"\nsemantic-graph corpus: {chunk_count} chunks, {len(warm_graph.edges)} edges")
+        print(f"cold start embedded {cold_embedded} distinct chunk texts (expected == chunk_count)")
+        print(f"warm restart embedded {warm_embedded} chunks (expected 0)")
+        print(f"warm restart (Retriever + engines + .graph): {warm_start_time:.3f}s")
+
+    assert chunk_count > 800
+    assert cold_embedded == chunk_count  # each chunk embedded once overall, not twice
+    assert warm_embedded == 0  # the actual regression: this used to be chunk_count again
+    assert warm_start_time < 5.0  # was ~160s before the fix
+    assert len(warm_graph.edges) == len(cold_graph.edges)

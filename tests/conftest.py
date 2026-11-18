@@ -60,6 +60,32 @@ def fake_embedder():
     return FakeEmbedder()
 
 
+class CountingEmbedder(FakeEmbedder):
+    """A :class:`FakeEmbedder` that records every text passed to ``embed()``,
+    so tests can assert exactly what did (or didn't) get re-embedded -- e.g.
+    "zero chunks embedded on a warm restart"."""
+
+    def __init__(self, dim: int = 64) -> None:
+        super().__init__(dim)
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts):
+        self.calls.append(list(texts))
+        return super().embed(texts)
+
+    @property
+    def embedded_texts(self) -> list[str]:
+        return [t for batch in self.calls for t in batch]
+
+    def reset_calls(self) -> None:
+        self.calls = []
+
+
+@pytest.fixture
+def counting_embedder():
+    return CountingEmbedder()
+
+
 @pytest.fixture
 def sample_corpus(tmp_path):
     """A small on-disk corpus with predictable, searchable content."""

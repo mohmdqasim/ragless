@@ -320,6 +320,96 @@ def test_semantic_knn_edges_no_duplicate_pairs(fake_embedder, tmp_path):
     assert len(pairs) == len(set(pairs))
 
 
+def _semantic_knn_corpus(tmp_path):
+    (tmp_path / "a.txt").write_text("pandas dataframe analysis tutorial")
+    (tmp_path / "b.txt").write_text("pandas dataframe analysis guide")
+    (tmp_path / "c.txt").write_text("completely unrelated rocket engine telemetry")
+
+
+def test_semantic_knn_edges_reuses_retriever_vectors_without_reembedding(
+    counting_embedder, tmp_path
+):
+    _semantic_knn_corpus(tmp_path)
+    r = Retriever(str(tmp_path), engines=["bm25", "fuzzy", "semantic"], embedder=counting_embedder)
+    chunk_count = len(r._chunks)
+    counting_embedder.reset_calls()  # the "semantic" engine already embedded everything above
+
+    builder = SemanticKNNEdges(
+        counting_embedder, min_similarity=0.0, k=2, retriever=r._retrievers["semantic"]
+    )
+    ctx = make_build_context(r._chunks, r._chunk_doc_id, r._doc_text)
+    result = builder.build(ctx)
+
+    assert counting_embedder.embedded_texts == []  # nothing re-embedded
+    assert result.edges  # still produced real edges from the reused vectors
+    assert chunk_count == len(r._chunks)
+
+
+def test_semantic_knn_edges_falls_back_to_cache_when_no_retriever(counting_embedder, tmp_path):
+    _semantic_knn_corpus(tmp_path)
+    cache_dir = tmp_path / ".cache"
+
+    # populate the cache the same way a semantic-engine Retriever would
+    r1 = Retriever(
+        str(tmp_path),
+        engines=["bm25", "fuzzy", "semantic"],
+        embedder=counting_embedder,
+        cache_dir=str(cache_dir),
+    )
+    counting_embedder.reset_calls()
+
+    from ragless.cache import EmbeddingCache
+
+    builder = SemanticKNNEdges(
+        counting_embedder,
+        min_similarity=0.0,
+        k=2,
+        retriever=None,  # simulate "no semantic retriever configured"
+        cache=EmbeddingCache(cache_dir),
+        file_signatures=r1._file_signatures,
+    )
+    ctx = make_build_context(r1._chunks, r1._chunk_doc_id, r1._doc_text)
+    result = builder.build(ctx)
+
+    assert counting_embedder.embedded_texts == []  # loaded from the on-disk cache instead
+    assert result.edges
+
+
+def test_semantic_knn_edges_embeds_only_missing_chunks(counting_embedder, tmp_path):
+    _semantic_knn_corpus(tmp_path)
+    builder = SemanticKNNEdges(counting_embedder, min_similarity=0.0, k=2, embed_batch_size=1)
+    r = Retriever(str(tmp_path))  # no semantic engine, no cache -- everything is "missing"
+    ctx = make_build_context(r._chunks, r._chunk_doc_id, r._doc_text)
+    builder.build(ctx)
+
+    embedded = sorted(counting_embedder.embedded_texts)
+    expected = sorted(c.text for c in r._chunks)
+    assert embedded == expected  # each chunk embedded exactly once
+    assert all(len(batch) == 1 for batch in counting_embedder.calls)  # respected embed_batch_size
+
+
+def test_semantic_knn_edges_new_path_matches_old_path_exactly(fake_embedder, tmp_path):
+    """The old code path (no retriever/cache -- embed everything fresh) must
+    produce identical edges to the new reuse path, since both normalize the
+    same way before the unchanged blockwise-cosine-kNN step."""
+    _semantic_knn_corpus(tmp_path)
+    r = Retriever(str(tmp_path), engines=["bm25", "fuzzy", "semantic"], embedder=fake_embedder)
+    ctx = make_build_context(r._chunks, r._chunk_doc_id, r._doc_text)
+
+    old_path = SemanticKNNEdges(fake_embedder, min_similarity=0.0, k=2)
+    new_path = SemanticKNNEdges(
+        fake_embedder, min_similarity=0.0, k=2, retriever=r._retrievers["semantic"]
+    )
+
+    old_edges = sorted(
+        (e.src, e.dst, round(e.weight, 9), e.reason) for e in old_path.build(ctx).edges
+    )
+    new_edges = sorted(
+        (e.src, e.dst, round(e.weight, 9), e.reason) for e in new_path.build(ctx).edges
+    )
+    assert old_edges == new_edges
+
+
 # --- BuildContext / make_build_context ---------------------------------------------
 
 
